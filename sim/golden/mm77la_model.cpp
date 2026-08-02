@@ -122,7 +122,28 @@ void Mm77laModel::step() {
         st_.c_delay = false;
     }
 
-    uint16_t ram_addr = st_.sag ? (0x30 | (st_.b & 0xF)) : st_.b;
+    // RAM address delay (m_ram_delay, docs/initial-plan.md section 2 and
+    // section 3's "RAM addressing register (B)" note): XAB/XDSK/XNSK change
+    // B, but the RAM address used for addressing doesn't catch up to that
+    // new B until the instruction AFTER the one immediately following --
+    // i.e. the single instruction immediately after XAB/XDSK/XNSK still
+    // reads/writes at the STALE (pre-change) address, and only the
+    // instruction after THAT sees the new address. Modeled with the same
+    // "commit a pending flag at the top of the next step()" pattern as
+    // c_delay above: st_.ram_addr_reg is normally resynced to st_.b every
+    // cycle; when st_.ram_delay is pending (set by the previous
+    // instruction), that resync is skipped exactly once (so this cycle's
+    // RAM access uses the address as of before the address-changing
+    // instruction ran), then the flag clears so normal per-cycle resync
+    // resumes starting next step(). LBA does NOT set st_.ram_delay (MM78
+    // override, see the LBA case below), so it has no delayed-address
+    // effect at all -- the very next instruction already sees LBA's new B.
+    if (st_.ram_delay) {
+        st_.ram_delay = false;
+    } else {
+        st_.ram_addr_reg = st_.b;
+    }
+    uint16_t ram_addr = st_.sag ? (0x30 | (st_.b & 0xF)) : st_.ram_addr_reg;
     st_.sag = false; // exactly one cycle of effect
 
     uint8_t op = rom_read(st_.pc);

@@ -53,6 +53,7 @@ module pps41_core (
     reg [10:0] pc_reg;
     reg [6:0]  b_reg;
     reg        sag;
+    reg [6:0]  ram_addr_reg; // delayed-address latch; see ram_addr_eff below
 
     // Architectural state (Task 13): mirrors Mm77laState.
     reg [3:0]  a;
@@ -76,8 +77,24 @@ module pps41_core (
 
     assign rom_addr = pc_reg;
     assign pc       = pc_reg;
+
+    // RAM address delay (m_ram_delay, docs/initial-plan.md section 2/section
+    // 3): XAB/XDSK/XNSK change b_reg, but the address actually used for RAM
+    // ops doesn't catch up to the new b_reg until the instruction after the
+    // one immediately following -- the single instruction immediately after
+    // XAB/XDSK/XNSK still reads/writes at the STALE (pre-change) address.
+    // Mirrors the golden model's step()-top ram_delay consumption exactly:
+    // ram_addr_reg normally resyncs to b_reg every cycle; when ram_delay is
+    // pending (set by the previous instruction), that resync is skipped
+    // exactly once, holding the prior address for this cycle, then the flag
+    // clears (see next_ram_delay's default below) so normal resync resumes
+    // next cycle. This is a pure function of registered state only (no
+    // combinational loop). LBA does NOT set ram_delay (MM78 override), so
+    // it has no delayed-address effect -- the very next instruction already
+    // sees LBA's new b_reg via the else branch below.
+    wire [6:0] ram_addr_eff = ram_delay ? ram_addr_reg : b_reg;
     /* verilator lint_off WIDTHEXPAND */
-    assign ram_addr = sag ? {2'b11, b_reg[3:0]} : b_reg;
+    assign ram_addr = sag ? {2'b11, b_reg[3:0]} : ram_addr_eff;
     /* verilator lint_on WIDTHEXPAND */
 
     assign a_out          = a;
@@ -180,6 +197,7 @@ module pps41_core (
     reg        next_skip;
     reg [3:0]  next_skip_count;
     reg        next_ram_delay;
+    reg [6:0]  next_ram_addr_reg;
     reg [7:0]  next_prev_op, next_prev2_op, next_prev3_op;
     reg        next_tab_pending;
     reg        next_int1l_hit;
@@ -210,7 +228,8 @@ module pps41_core (
         next_stack1      = stack1;
         next_skip        = 1'b0;
         next_skip_count  = skip_count;
-        next_ram_delay   = ram_delay;
+        next_ram_delay   = 1'b0; // one-shot: consumed every cycle unless this instruction re-sets it below
+        next_ram_addr_reg = ram_addr_eff; // resync-or-hold, per ram_addr_eff's definition above
         next_tab_pending = tab_pending;
         next_int1l_hit   = int1l_hit;
         next_ram_wr_en   = 1'b0;
@@ -406,6 +425,7 @@ module pps41_core (
             pc_reg          <= 11'h0;
             b_reg       <= 7'h0;
             sag         <= 1'b0;
+            ram_addr_reg <= 7'h0;
             a           <= 4'h0;
             x           <= 4'h0;
             c           <= 1'b0;
@@ -438,6 +458,7 @@ module pps41_core (
             skip        <= next_skip;
             skip_count  <= next_skip_count;
             ram_delay   <= next_ram_delay;
+            ram_addr_reg <= next_ram_addr_reg;
             prev_op     <= next_prev_op;
             prev2_op    <= next_prev2_op;
             prev3_op    <= next_prev3_op;

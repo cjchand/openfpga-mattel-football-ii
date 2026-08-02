@@ -17,6 +17,7 @@ struct Mm77laState {
     bool skip = false;
     uint8_t skip_count = 0;
     bool ram_delay = false;
+    uint8_t ram_addr_reg = 0; // delayed-address latch; see step()'s ram_delay handling
     bool sag = false;
     bool c_delay = false;
     uint8_t prev_op = 0, prev2_op = 0, prev3_op = 0;
