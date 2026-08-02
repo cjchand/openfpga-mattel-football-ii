@@ -34,6 +34,8 @@ public:
     uint8_t debug_ram_read(uint8_t addr) const;
     void debug_ram_write(uint8_t addr, uint8_t val);
     uint8_t debug_rom_read(uint16_t addr) const;
+    void debug_set_pc(uint16_t pc) { st_.pc = pc & 0x7FF; }
+    void debug_step_pc_only() { increment_pc(); }
 
 private:
     uint8_t rom_read(uint16_t addr) const;

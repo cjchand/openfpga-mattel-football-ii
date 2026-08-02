@@ -42,3 +42,9 @@ void Mm77laModel::ram_write(uint8_t addr, uint8_t val) {
 uint8_t Mm77laModel::debug_ram_read(uint8_t addr) const { return ram_read(addr); }
 void Mm77laModel::debug_ram_write(uint8_t addr, uint8_t val) { ram_write(addr, val); }
 uint8_t Mm77laModel::debug_rom_read(uint16_t addr) const { return rom_read(addr); }
+
+void Mm77laModel::increment_pc() {
+    int feed = ((st_.pc & 0x3e) == 0) ? 1 : 0;
+    feed ^= (st_.pc >> 1 ^ st_.pc) & 1;
+    st_.pc = static_cast<uint16_t>((st_.pc & ~0x3fu) | (st_.pc >> 1 & 0x1f) | (feed << 5));
+}

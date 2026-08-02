@@ -61,11 +61,43 @@ static void test_rom_read_mirrors_0x400_0x5ff_at_0x600_0x7ff() {
     }
 }
 
+static void test_pc_lfsr_known_sequence() {
+    // Independently compute the expected sequence from the exact recurrence
+    // in docs/initial-plan.md §4, then check the model matches it step for step.
+    uint8_t rom[1] = {0};
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_pc(0);
+    uint16_t expect = 0;
+    for (int i = 0; i < 64; i++) {
+        int feed = ((expect & 0x3e) == 0) ? 1 : 0;
+        feed ^= (expect >> 1 ^ expect) & 1;
+        expect = (expect & ~0x3f) | (expect >> 1 & 0x1f) | (feed << 5);
+        m.debug_step_pc_only();
+        CHECK(m.state().pc == expect);
+    }
+    // The low-6-bit LFSR must return to 0 after exactly 64 steps (it's a
+    // full-cycle LFSR over the 64 non-... actually over all 64 states
+    // including the degenerate all-zero re-seed via the feed==1 special case).
+    CHECK(expect == 0);
+}
+
+static void test_pc_high_bits_are_plain_storage() {
+    uint8_t rom[1] = {0};
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_pc(0x40); // high bits = 0x40 (bit 6 set), low 6 bits = 0
+    m.debug_step_pc_only();
+    CHECK((m.state().pc & ~0x3Fu) == 0x40); // high bits untouched by increment_pc
+}
+
 int main() {
     test_reset_fills_ram_with_0xf();
     test_ram_bank_a_mirrors_at_48_and_58_not_50();
     test_ram_bank_c_mirrors_at_68_and_78_not_70();
     test_rom_read_mirrors_0x400_0x5ff_at_0x600_0x7ff();
+    test_pc_lfsr_known_sequence();
+    test_pc_high_bits_are_plain_storage();
     if (failures == 0) { std::printf("PASS\n"); return 0; }
     std::printf("%d FAILURE(S)\n", failures);
     return 1;
