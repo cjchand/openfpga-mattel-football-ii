@@ -6,20 +6,18 @@
 // block. Case order and case grouping intentionally match step() so the two
 // can be diffed side by side.
 //
-// One structural difference from the golden model, required by this
-// module's single-byte-per-cycle ROM interface (rom_addr/rom_data give
-// exactly one opcode byte per clock): the golden model's "consumed_by_skip"
-// path can fetch 2-3 ROM bytes within a single step() call when a skip
-// lands on a TR-prefixed multi-byte instruction. This RTL instead spreads
-// that same skip-continuation over multiple clock cycles: while `skip` is
-// set, each cycle's fetched byte is discarded, and `skip` stays asserted
+// Both this RTL and the golden model (sim/golden/mm77la_model.cpp) now
+// fetch exactly one ROM byte per cycle/step() call, including through a
+// skip that lands on a TR-prefixed multi-byte instruction: each cycle's
+// fetched byte is discarded while `skip` is set, and `skip` stays asserted
 // for one more cycle whenever the discarded byte is itself a TR prefix
 // (op_hi==4'h3), stopping on the first non-TR byte. Because prev_op is
 // updated to `op` every single cycle (see the bottom of this block), this
 // naturally ends up holding the LAST byte actually consumed by the time
-// skip clears -- exactly the Task 7 prev_op-not-stale fix, achieved for
-// free by the per-cycle structure rather than the golden model's manual
-// last_byte bookkeeping.
+// skip clears. (Prior to commit 03a6cab, the golden model's step() could
+// fetch 2-3 ROM bytes in one call when a skip landed on a TR prefix, which
+// was a structural difference from this RTL; that was fixed to match this
+// module's one-byte-per-cycle structure, so no divergence remains here.)
 module pps41_core (
     input  wire        clk,
     input  wire        rst_n,
@@ -204,6 +202,34 @@ module pps41_core (
     reg        next_ram_wr_en;
     reg [3:0]  next_ram_wr_data;
 
+    // TAB's skip_count (docs/initial-plan.md's m_skip_count: "skips A+1
+    // instructions going forward, used for jump tables"): consume one skip
+    // credit per FRESH instruction fetch by reusing the exact same `skip` /
+    // TR-continuation machinery below (mirrors the golden model's step()
+    // change). skip_count_active is asserted only when we are not already
+    // mid a skip, so a multi-byte (TR-prefixed) instruction inside the
+    // skipped range counts as ONE credit (skip_count is decremented only on
+    // entry; the TR-continuation re-asserts `skip` without touching
+    // skip_count again). This arming check and a skip_count freshly
+    // assigned by THIS SAME cycle's TAB-delayed-fire cannot race, since
+    // skip_count_active reads the registered (pre-cycle) skip_count.
+    //
+    // skip_count and tab_pending CAN legitimately be simultaneously nonzero
+    // across a cycle boundary -- e.g. back-to-back TAB;TAB: the second
+    // TAB's own dispatch re-arms tab_pending for its OWN future fire, in
+    // the very same cycle where the first TAB's tab_pending fire (see
+    // below) sets a fresh nonzero skip_count. When that happens, the
+    // instruction immediately after the second TAB gets treated as a skip
+    // by skip_eff (consuming a skip_count credit) before it can reach the
+    // normal dispatch path -- but the `if (skip_eff)` block already
+    // independently fires a pending tab_pending in that situation (see its
+    // own `if (tab_pending)` branch inside that block), so the second
+    // TAB's delayed effect still fires correctly, just via that branch
+    // instead of the bottom-of-cycle one. Mirrors the golden model's
+    // equivalent comment and test_tab_back_to_back_fires_twice.
+    wire skip_count_active = !skip && (skip_count != 4'h0);
+    wire skip_eff = skip || skip_count_active;
+
     reg        is_3byte, is_2byte;
     reg        in_subroutine_page;
     /* verilator lint_off UNUSEDSIGNAL */
@@ -244,9 +270,13 @@ module pps41_core (
         bl_val   = 4'h0;
         continue_skip = 1'b0;
 
-        if (skip) begin
+        if (skip_eff) begin
             // ---- consumed_by_skip: discard this byte; extend through any
             // TR-prefixed continuation byte(s), spread over cycles. ----
+            // If skip_count_active is what got us in here (rather than the
+            // ordinary single-shot `skip`), consume exactly one credit on
+            // this, the entry cycle only.
+            if (skip_count_active) next_skip_count = skip_count - 4'h1;
             continue_skip = is_tr; // op_hi==4'h3
             next_skip = continue_skip;
             if (!continue_skip) begin
@@ -259,12 +289,12 @@ module pps41_core (
         end else begin
             if (is_3byte) begin
                 case (op_hi)
-                    4'h8: begin // TMLB
+                    4'h8, 4'h9, 4'hA, 4'hB: begin // TMLB
                         next_stack1 = stack0;
                         next_stack0 = pc_next;
                         next_pc = {1'b1, ~prev_op[3:0], ~op[5:0]};
                     end
-                    4'hC: begin // TLB
+                    4'hC, 4'hD, 4'hE, 4'hF: begin // TLB
                         next_pc = {1'b1, ~prev_op[3:0], ~op[5:0]};
                     end
                     default: ; // no-op
@@ -278,12 +308,12 @@ module pps41_core (
                     4'h6: begin // SKAEI x (op==0x60 exactly is illegal, treated as no-op)
                         if (op != 8'h60) next_skip = (a == ~op[3:0]);
                     end
-                    4'h8: begin // TML
+                    4'h8, 4'h9, 4'hA, 4'hB: begin // TML
                         next_stack1 = stack0;
                         next_stack0 = pc_next;
                         next_pc = {1'b0, ~prev_op[3:0], ~op[5:0]};
                     end
-                    4'hC: begin // TL
+                    4'hC, 4'hD, 4'hE, 4'hF: begin // TL
                         next_pc = {1'b0, ~prev_op[3:0], ~op[5:0]};
                     end
                     default: ; // no-op
@@ -303,14 +333,14 @@ module pps41_core (
                             next_skip = (op_lo4 == 4'h6) ? 1'b0 : !alu_overflow;
                         end
                     end
-                    4'h8: begin // TM x
+                    4'h8, 4'h9, 4'hA, 4'hB: begin // TM x
                         if (!in_subroutine_page) begin
                             next_stack1 = stack0;
                             next_stack0 = pc_next;
                         end
                         next_pc = {5'b11111, ~op[5:0]};
                     end
-                    4'hC: begin // T x
+                    4'hC, 4'hD, 4'hE, 4'hF: begin // T x
                         if (in_subroutine_page) local_pc[6] = 1'b0;
                         next_pc = {local_pc[10:6], ~op[5:0]};
                     end
@@ -363,6 +393,8 @@ module pps41_core (
                                     8'h00: ; // NOP
                                     8'h02: next_skip = (c_in_eff == 1'b0); // SKNC
                                     8'h04: next_int1l_hit = 1'b1; // INT1L -- flagged no-op
+                                    8'h05: begin next_c = 1'b0; next_c_in = 1'b0; end // RC -- immediate (no c_delay), docs/initial-plan.md: "RC: carry = 0"
+                                    8'h06: begin next_c = 1'b1; next_c_in = 1'b1; end // SC -- immediate (no c_delay), docs/initial-plan.md: "SC: carry = 1"
                                     8'h07: next_sag = 1'b1; // SAG
                                     8'h2C: next_tab_pending = 1'b1; // TAB -- delayed fire
                                     8'h2E: begin // RTSK
@@ -408,10 +440,27 @@ module pps41_core (
             // applies uniformly regardless of which dispatch tier the
             // following opcode went through, exactly like the golden
             // model's bottom-of-step() check.
-            if (tab_pending && op != 8'h2C) begin
+            //
+            // Gate on the REGISTERED `tab_pending` (its value from before
+            // this cycle's own dispatch ran) rather than requiring
+            // `op != 8'h2C` (Important #9 fix): the reference (MAME)
+            // semantics fire based on "was the PREVIOUS opcode TAB",
+            // checked unconditionally every cycle -- not "is the CURRENT
+            // opcode something other than TAB". The old `op != 8'h2C` guard
+            // suppressed firing whenever this cycle's own opcode was itself
+            // a fresh TAB, so back-to-back TAB;TAB;NOP only fired once
+            // instead of the correct twice. `tab_pending` here still holds
+            // its pre-cycle value (combinational block reads registers, not
+            // this cycle's `next_*` writes), so a fresh TAB this cycle
+            // (which sets next_tab_pending=1 in the 8'h2C case above) no
+            // longer masks a still-pending PRIOR TAB's fire.
+            if (tab_pending) begin
                 next_skip_count  = next_a + 4'h1;
                 next_a           = 4'hF;
-                next_tab_pending = 1'b0;
+                // Only clear if this cycle's own opcode didn't just re-arm
+                // it (op==8'h2C already set next_tab_pending=1 above; leave
+                // that armed for ITS delayed fire next cycle).
+                if (op != 8'h2C) next_tab_pending = 1'b0;
             end
         end
 

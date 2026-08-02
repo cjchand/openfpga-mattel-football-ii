@@ -349,6 +349,251 @@ static void test_sag_forces_ram_addr_upper_bits_to_3_for_one_cycle_only() {
     CHECK(m.debug_ram_read(0x05) == 0xF); // untouched (still reset value)
 }
 
+static void test_t_dispatches_across_full_high_nibble_range() {
+    // Critical #1 regression: docs/initial-plan.md:243 specifies T's opcode
+    // range as 0xC0-0xF0 -- op&0xF0 in {0xC0,0xD0,0xE0,0xF0} ALL dispatch to
+    // the SAME T handler (matching MAME's grouped
+    // `case 0xc0: case 0xd0: case 0xe0: case 0xf0:` fallthrough), not just
+    // the single exact value 0xC0. The old `switch (op & 0xF0) { case 0xC0:
+    // ... }` silently fell through to the NOP default for 0xD0/0xE0/0xF0.
+    // Note: op&0x3F (the 6-bit operand) includes bits 4-5, which overlap
+    // with the low 2 bits of the "high nibble" being varied here -- so each
+    // `hi` value below encodes a genuinely different operand, not just a
+    // different (but equivalent) opcode spelling of "operand 5". Compute
+    // the expected operand from the FULL op byte (hi|0x05), not a fixed 5.
+    const uint8_t his[] = {0xC0, 0xD0, 0xE0, 0xF0};
+    for (uint8_t hi : his) {
+        uint8_t rom[1] = {0x00};
+        Mm77laModel m(rom, sizeof(rom));
+        m.reset();
+        m.debug_set_pc(0x100);
+        uint8_t op = static_cast<uint8_t>(hi | 0x05);
+        m.debug_poke_rom(0x100, op);
+        m.step();
+        CHECK(m.state().pc == (0x100 | (~op & 0x3F)));
+    }
+}
+
+static void test_tm_dispatches_across_full_high_nibble_range() {
+    // Critical #1 regression, TM side: docs/initial-plan.md:242 specifies
+    // 0x80-0xB0 all dispatch to TM. (See the operand note in the T test
+    // above -- op&0x3F, not a fixed nibble, is the real operand.)
+    const uint8_t his[] = {0x80, 0x90, 0xA0, 0xB0};
+    for (uint8_t hi : his) {
+        uint8_t rom[1] = {0x00};
+        Mm77laModel m(rom, sizeof(rom));
+        m.reset();
+        m.debug_set_pc(0x040); // not in the subroutine page
+        uint8_t op = static_cast<uint8_t>(hi | 0x03);
+        m.debug_poke_rom(0x040, op);
+        m.step();
+        CHECK(m.state().stack[0] == 0x060); // call still pushes regardless of which nibble matched
+        CHECK(m.state().pc == ((0x7FF & ~0x3Fu) | (~op & 0x3F)));
+    }
+}
+
+static void test_tl_dispatches_across_full_high_nibble_range() {
+    // Critical #1 regression, 2-byte TL: docs/initial-plan.md:286 specifies
+    // 0xC0-0xF0 all dispatch to TL when prev_op was TR.
+    const uint8_t his[] = {0xC0, 0xD0, 0xE0, 0xF0};
+    for (uint8_t hi : his) {
+        uint8_t op = static_cast<uint8_t>(hi | 0x05);
+        uint8_t rom[2] = {0x30, op}; // TR; TL(hi) 5
+        Mm77laModel m(rom, sizeof(rom));
+        m.reset();
+        m.step(); // TR
+        m.step(); // TL, dispatched because prev_op was TR
+        uint16_t expected = static_cast<uint16_t>(((~0x30 & 0xF) << 6) | (~op & 0x3F));
+        CHECK(m.state().pc == expected);
+    }
+}
+
+static void test_tml_dispatches_across_full_high_nibble_range() {
+    // Critical #1 regression, 2-byte TML: docs/initial-plan.md:286 specifies
+    // 0x80-0xB0 all dispatch to TML when prev_op was TR.
+    const uint8_t his[] = {0x80, 0x90, 0xA0, 0xB0};
+    for (uint8_t hi : his) {
+        uint8_t op = static_cast<uint8_t>(hi | 0x05);
+        uint8_t rom[2] = {0x30, op}; // TR; TML(hi) 5
+        Mm77laModel m(rom, sizeof(rom));
+        m.reset();
+        m.debug_set_stack0(0x000);
+        m.step(); // TR
+        m.step(); // TML, dispatched because prev_op was TR; must also push
+        uint16_t expected = static_cast<uint16_t>(((~0x30 & 0xF) << 6) | (~op & 0x3F));
+        CHECK(m.state().pc == expected);
+        CHECK(m.state().stack[0] != 0x000); // push happened (old bug: silent no-op, no push, no jump)
+    }
+}
+
+static void test_tlb_dispatches_across_full_high_nibble_range() {
+    // Critical #1 regression, 3-byte TLB: docs/initial-plan.md:289 specifies
+    // 0xC0-0xF0 all dispatch to TLB when prev_op AND prev2_op were TR.
+    const uint8_t his[] = {0xC0, 0xD0, 0xE0, 0xF0};
+    for (uint8_t hi : his) {
+        uint8_t op = static_cast<uint8_t>(hi | 0x05);
+        uint8_t rom[3] = {0x30, 0x30, op}; // TR; TR; TLB(hi) 5
+        Mm77laModel m(rom, sizeof(rom));
+        m.reset();
+        m.step(); // TR
+        m.step(); // TR (is_2byte dispatch: another TR, enables 3-byte next)
+        m.step(); // TLB, dispatched because prev_op AND prev2_op were TR
+        uint16_t expected = static_cast<uint16_t>(0x400 | ((~0x30 & 0xF) << 6) | (~op & 0x3F));
+        CHECK(m.state().pc == expected);
+    }
+}
+
+static void test_tmlb_dispatches_across_full_high_nibble_range() {
+    // Critical #1 regression, 3-byte TMLB: docs/initial-plan.md's MM78-tier
+    // section specifies 0x80-0xB0 all dispatch to TMLB when prev_op AND
+    // prev2_op were TR.
+    const uint8_t his[] = {0x80, 0x90, 0xA0, 0xB0};
+    for (uint8_t hi : his) {
+        uint8_t op = static_cast<uint8_t>(hi | 0x05);
+        uint8_t rom[3] = {0x30, 0x30, op}; // TR; TR; TMLB(hi) 5
+        Mm77laModel m(rom, sizeof(rom));
+        m.reset();
+        m.debug_set_stack0(0x000);
+        m.step(); // TR
+        m.step(); // TR
+        m.step(); // TMLB, dispatched because prev_op AND prev2_op were TR; must also push
+        uint16_t expected = static_cast<uint16_t>(0x400 | ((~0x30 & 0xF) << 6) | (~op & 0x3F));
+        CHECK(m.state().pc == expected);
+        CHECK(m.state().stack[0] != 0x000); // push happened
+    }
+}
+
+static void test_rc_clears_carry_immediately() {
+    // Important #4: RC (0x05) sets carry = 0. docs/initial-plan.md's MM76
+    // tier section lists "RC: carry = 0" with no mention of c_delay (unlike
+    // AC/ACSK, which explicitly say "carry update is DELAYED one cycle") --
+    // so both c and c_in update the SAME cycle, immediately.
+    // Force c/c_in to 1 first via SC, then RC should clear both immediately.
+    uint8_t rom2[2] = {0x06, 0x05}; // SC; RC
+    Mm77laModel m2(rom2, sizeof(rom2));
+    m2.reset();
+    m2.step(); // SC
+    CHECK(m2.state().c == 1);
+    CHECK(m2.state().c_in == 1);
+    m2.step(); // RC
+    CHECK(m2.state().c == 0);
+    CHECK(m2.state().c_in == 0); // immediate, not delayed like AC
+}
+
+static void test_sc_sets_carry_immediately() {
+    // Important #4: SC (0x06) sets carry = 1, immediately (no c_delay).
+    uint8_t rom[1] = {0x06}; // SC
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    CHECK(m.state().c == 0);
+    CHECK(m.state().c_in == 0);
+    m.step();
+    CHECK(m.state().c == 1);
+    CHECK(m.state().c_in == 1); // immediate: SKNC on the VERY NEXT step already sees it
+}
+
+static void test_skip_count_skips_forward_a_plus_1_instructions() {
+    // Critical #3: TAB sets skip_count = A+1, and this must cause the NEXT
+    // A+1 instructions to be SKIPPED (not executed) -- not just hold a
+    // register value nothing reads. Program: TAB; NOP; then A+1=3 filler
+    // instructions that would perturb A if (incorrectly) executed, followed
+    // by a LAI that must be the one that actually lands.
+    //
+    // Filler is AISK (0x60 family), NOT LAI, specifically to avoid LAI's
+    // own successive-LAI coalescing-suppression logic (checks prev_op &
+    // 0xF0 == 0x40) confounding this test: prev_op is updated to the
+    // last-consumed byte even when that byte was skip-consumed rather than
+    // executed (by design, so TR-continuation tracking stays correct), so
+    // if the filler were itself LAI-family, the final real LAI would be
+    // spuriously coalescing-suppressed by the skipped LAI immediately
+    // before it.
+    //   [0] TAB          -- A=2 at decode time, so skip_count will become 3
+    //   [1] NOP           -- TAB's one-opcode delay: fires at the end of this step
+    //   [2] AISK 1        -- must be SKIPPED (1st of 3 skip_count credits)
+    //   [3] AISK 2        -- must be SKIPPED (2nd of 3 skip_count credits)
+    //   [4] AISK 3        -- must be SKIPPED (3rd of 3 skip_count credits)
+    //   [5] LAI 4         -- must EXECUTE for real: A becomes 4
+    uint8_t rom[6] = {
+        0x2C,                                 // TAB
+        0x00,                                 // NOP
+        static_cast<uint8_t>(0x60 | 0x1),     // AISK 1
+        static_cast<uint8_t>(0x60 | 0x2),     // AISK 2
+        static_cast<uint8_t>(0x60 | 0x3),     // AISK 3
+        static_cast<uint8_t>(0x40 | 0x4),     // LAI 4
+    };
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x2);
+    m.step(); // TAB decoded; effect not applied yet
+    CHECK(m.state().skip_count == 0);
+    m.step(); // NOP executes; TAB's delayed effect fires: skip_count = 2+1 = 3, A = 0xF
+    CHECK(m.state().skip_count == 3);
+    CHECK(m.state().a == 0xF);
+    m.step(); // AISK 1 -- consumed as a skip credit, NOT executed
+    CHECK(m.state().skip_count == 2);
+    CHECK(m.state().a == 0xF); // unchanged -- proves this instruction did NOT execute
+    m.step(); // AISK 2 -- consumed as a skip credit, NOT executed
+    CHECK(m.state().skip_count == 1);
+    CHECK(m.state().a == 0xF);
+    m.step(); // AISK 3 -- consumed as a skip credit, NOT executed
+    CHECK(m.state().skip_count == 0);
+    CHECK(m.state().a == 0xF);
+    m.step(); // LAI 4 -- skip_count is now 0, this one executes for real
+    CHECK(m.state().a == 0x4);
+}
+
+static void test_skip_count_of_one_via_a_equals_0xf_skips_exactly_one() {
+    // Edge case: A==0xF at TAB decode time means skip_count = (0xF+1)&0xF =
+    // 0 (wraps, per the existing 4-bit-register test), so NOTHING should be
+    // skipped by skip_count (distinct from A==0xE, where skip_count=0xF,
+    // the maximum -- tested elsewhere via the wrap regression). This test
+    // instead pins down the simplest nonzero case: A==0x0 at TAB decode
+    // time means skip_count=1, so exactly ONE following instruction (after
+    // the TAB-delay NOP) is skipped.
+    // Filler is AISK (not LAI) for the same coalescing-suppression reason
+    // documented in test_skip_count_skips_forward_a_plus_1_instructions.
+    uint8_t rom[4] = {
+        0x2C,                             // TAB
+        0x00,                             // NOP -- TAB's delayed effect fires here (A=0 -> skip_count=1)
+        static_cast<uint8_t>(0x60 | 0x9), // AISK 9 -- must be SKIPPED
+        static_cast<uint8_t>(0x40 | 0xA), // LAI A -- must execute
+    };
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x0);
+    m.step(); // TAB
+    m.step(); // NOP; fires: skip_count = 0+1 = 1, A = 0xF
+    CHECK(m.state().skip_count == 1);
+    m.step(); // AISK 9 -- skipped
+    CHECK(m.state().skip_count == 0);
+    CHECK(m.state().a == 0xF);
+    m.step(); // LAI A -- executes for real
+    CHECK(m.state().a == 0xA);
+}
+
+static void test_tab_back_to_back_fires_twice() {
+    // Important #9: reference (MAME) semantics fire TAB's delayed effect
+    // based on "was the PREVIOUS opcode TAB", checked unconditionally every
+    // instruction -- so TAB;TAB;NOP fires TWICE (once at the end of the
+    // second TAB, once at the end of the NOP), not once. The old
+    // `tab_pending && op != 0x2C` guard suppressed the first of these two
+    // fires because it (incorrectly) required the CURRENT opcode not be
+    // TAB.
+    uint8_t rom[3] = {0x2C, 0x2C, 0x00}; // TAB; TAB; NOP
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x1);
+    m.step(); // TAB #1 decoded; nothing fires yet
+    CHECK(m.state().skip_count == 0);
+    m.step(); // TAB #2: fires TAB #1's delayed effect (A=1 -> skip_count=2, A=0xF);
+              // TAB #2 itself re-arms tab_pending for its OWN delayed fire next step
+    CHECK(m.state().skip_count == 2);
+    CHECK(m.state().a == 0xF);
+    m.step(); // NOP: fires TAB #2's delayed effect (A=0xF -> skip_count wraps to 0, A=0xF)
+    CHECK(m.state().skip_count == 0);
+    CHECK(m.state().a == 0xF);
+}
+
 static void test_tr_prefixed_tl_jumps_off_page() {
     // TR (0x30) then TL x: 2-byte form. pc = (~prev_op & 0xF)<<6 | (~op & 0x3F)
     uint8_t rom[2] = {0x30, static_cast<uint8_t>(0xC0 | 0x05)}; // TR; TL 5
@@ -587,6 +832,17 @@ int main() {
     test_tab_fires_one_opcode_after_next();
     test_tab_skip_count_wraps_at_4_bits_when_a_is_0xf();
     test_int1l_is_noop_but_flags_hit();
+    test_t_dispatches_across_full_high_nibble_range();
+    test_tm_dispatches_across_full_high_nibble_range();
+    test_tl_dispatches_across_full_high_nibble_range();
+    test_tml_dispatches_across_full_high_nibble_range();
+    test_tlb_dispatches_across_full_high_nibble_range();
+    test_tmlb_dispatches_across_full_high_nibble_range();
+    test_rc_clears_carry_immediately();
+    test_sc_sets_carry_immediately();
+    test_skip_count_skips_forward_a_plus_1_instructions();
+    test_skip_count_of_one_via_a_equals_0xf_skips_exactly_one();
+    test_tab_back_to_back_fires_twice();
     if (failures == 0) { std::printf("PASS\n"); return 0; }
     std::printf("%d FAILURE(S)\n", failures);
     return 1;

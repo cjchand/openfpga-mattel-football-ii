@@ -23,6 +23,11 @@ struct Mm77laState {
     uint8_t prev_op = 0, prev2_op = 0, prev3_op = 0;
     bool tab_pending = false;   // TAB's effect fires on the opcode AFTER next
     bool int1l_hit = false;      // flagged for the testbench, does not affect execution
+    bool ix_executed = false;    // true only when op 0x72 (IX) was genuinely dispatched/executed
+                                  // this step -- NOT when 0x72 merely passed through as a skipped
+                                  // byte or a TR-prefixed operand byte. See the testbench's
+                                  // Important #11 fix: post-hoc `prev_op == 0x72` inspection can
+                                  // false-positive on those other cases, this flag cannot.
 };
 
 class Mm77laModel {

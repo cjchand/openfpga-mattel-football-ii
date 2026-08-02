@@ -146,8 +146,49 @@ void Mm77laModel::step() {
     uint16_t ram_addr = st_.sag ? (0x30 | (st_.b & 0xF)) : st_.ram_addr_reg;
     st_.sag = false; // exactly one cycle of effect
 
+    // ix_executed is a per-step (non-sticky) flag: reset every step, then
+    // set true only inside the real `case 0x72:` (IX) execution below. See
+    // Important #11: the testbench previously counted IX executions via
+    // post-hoc `prev_op == 0x72` inspection, which can false-positive when
+    // 0x72 passes through as a discarded skip byte or a TR-prefixed operand
+    // byte rather than being genuinely dispatched as an opcode.
+    st_.ix_executed = false;
+
     uint8_t op = rom_read(st_.pc);
     increment_pc();
+
+    // TAB's skip_count (docs/initial-plan.md's m_skip_count: "skips A+1
+    // instructions going forward, used for jump tables"): consume one skip
+    // credit per FRESH instruction fetch by reusing the exact same
+    // consumed_by_skip / TR-continuation machinery as the ordinary
+    // single-shot st_.skip flag below. This naturally makes a multi-byte
+    // (TR-prefixed) instruction inside the skipped range count as ONE
+    // credit, not one credit per byte, since re-arming st_.skip for the
+    // continuation bytes (further down) does not touch skip_count again.
+    // Only arm a NEW skip here if we're not already mid a skip -- this
+    // arming check and a skip_count value freshly assigned by THIS SAME
+    // step's TAB-delayed-fire (below) cannot race: skip_count only becomes
+    // nonzero via a delayed fire, and this arming check runs before any
+    // fire logic in the current step, so it only ever sees a skip_count
+    // left over from a PRIOR step.
+    //
+    // That said, skip_count and tab_pending CAN legitimately be
+    // simultaneously nonzero across a step boundary -- e.g. back-to-back
+    // TAB;TAB: the second TAB's own dispatch re-arms tab_pending for its
+    // OWN future fire, in the very same step where the first TAB's
+    // tab_was_pending fire (see below) sets a fresh nonzero skip_count.
+    // When that happens, the instruction immediately after the second TAB
+    // gets armed as a skip by THIS check (consuming a skip_count credit)
+    // before it can reach the normal dispatch path -- but the
+    // consumed_by_skip block below already independently fires a pending
+    // tab_pending in that situation (see its own `else if (st_.tab_pending)`
+    // branch), so the second TAB's delayed effect still fires correctly,
+    // just via that branch instead of the bottom-of-step one. See
+    // test_tab_back_to_back_fires_twice, which exercises exactly this path.
+    if (!st_.skip && st_.skip_count > 0) {
+        st_.skip_count--;
+        st_.skip = true;
+    }
 
     bool consumed_by_skip = st_.skip;
     if (consumed_by_skip) {
@@ -192,15 +233,29 @@ void Mm77laModel::step() {
     bool is_2byte = op_is_tr(st_.prev_op);
     bool is_3byte = is_2byte && op_is_tr(st_.prev2_op);
 
+    // Latch tab_pending's value from BEFORE this instruction's own dispatch
+    // runs (Important #9 fix): the reference (MAME) semantics fire TAB's
+    // delayed effect based on "was the PREVIOUS opcode TAB" checked
+    // unconditionally every instruction (`if (m_prev_op == 0x2c) op_tab();`)
+    // -- NOT "is the CURRENT opcode something other than TAB", which is what
+    // the old `st_.tab_pending && op != 0x2C` guard effectively tested. That
+    // old guard suppressed firing whenever the current instruction was
+    // itself a fresh TAB, so back-to-back TAB;TAB;NOP only fired once
+    // instead of the correct twice (once for each TAB's own delayed
+    // effect). Capturing the pre-dispatch value here means a fresh TAB this
+    // cycle (which re-arms st_.tab_pending below) no longer masks a
+    // still-pending PRIOR TAB's fire.
+    bool tab_was_pending = st_.tab_pending;
+
     if (is_3byte) {
         switch (op & 0xF0) {
-            case 0x80: { // TMLB
+            case 0x80: case 0x90: case 0xA0: case 0xB0: { // TMLB
                 st_.stack[1] = st_.stack[0];
                 st_.stack[0] = st_.pc;
                 st_.pc = static_cast<uint16_t>(0x400 | ((~st_.prev_op & 0xF) << 6) | (~op & 0x3F));
                 break;
             }
-            case 0xC0: { // TLB
+            case 0xC0: case 0xD0: case 0xE0: case 0xF0: { // TLB
                 st_.pc = static_cast<uint16_t>(0x400 | ((~st_.prev_op & 0xF) << 6) | (~op & 0x3F));
                 break;
             }
@@ -217,13 +272,13 @@ void Mm77laModel::step() {
                 if (op != 0x60) st_.skip = (st_.a == (~op & 0xF));
                 break;
             }
-            case 0x80: { // TML
+            case 0x80: case 0x90: case 0xA0: case 0xB0: { // TML
                 st_.stack[1] = st_.stack[0];
                 st_.stack[0] = st_.pc;
                 st_.pc = static_cast<uint16_t>(((~st_.prev_op & 0xF) << 6) | (~op & 0x3F));
                 break;
             }
-            case 0xC0: { // TL
+            case 0xC0: case 0xD0: case 0xE0: case 0xF0: { // TL
                 st_.pc = static_cast<uint16_t>(((~st_.prev_op & 0xF) << 6) | (~op & 0x3F));
                 break;
             }
@@ -243,7 +298,7 @@ void Mm77laModel::step() {
                 }
                 break;
             }
-            case 0x80: { // TM x
+            case 0x80: case 0x90: case 0xA0: case 0xB0: { // TM x
                 constexpr uint16_t prgmask = 0x7FF;
                 bool in_subroutine_page = (st_.pc & ~0x7Fu) == (prgmask & ~0x7Fu);
                 if (!in_subroutine_page) { st_.stack[1] = st_.stack[0]; st_.stack[0] = st_.pc; }
@@ -251,7 +306,7 @@ void Mm77laModel::step() {
                 st_.pc = static_cast<uint16_t>((prgmask & ~0x3Fu) | (~x & 0x3Fu));
                 break;
             }
-            case 0xC0: { // T x
+            case 0xC0: case 0xD0: case 0xE0: case 0xF0: { // T x
                 constexpr uint16_t prgmask = 0x7FF;
                 bool in_subroutine_page = (st_.pc & ~0x7Fu) == (prgmask & ~0x7Fu);
                 uint16_t pc = st_.pc;
@@ -301,11 +356,13 @@ void Mm77laModel::step() {
                             case 0x00: break; // NOP
                             case 0x02: st_.skip = (st_.c_in == 0); break; // SKNC
                             case 0x04: st_.int1l_hit = true; break; // INT1L -- flagged no-op
+                            case 0x05: st_.c = 0; st_.c_in = 0; break; // RC -- docs/initial-plan.md: "RC: carry = 0", no c_delay mentioned (unlike AC/ACSK) so both c and c_in update immediately, same cycle
+                            case 0x06: st_.c = 1; st_.c_in = 1; break; // SC -- docs/initial-plan.md: "SC: carry = 1", immediate like RC
                             case 0x07: st_.sag = true; break; // SAG
                             case 0x2C: st_.tab_pending = true; break; // TAB -- delayed fire
                             case 0x2E: { st_.pc = st_.stack[0] & 0x7FF; st_.stack[0] = st_.stack[1]; st_.skip = true; break; } // RTSK
                             case 0x2F: { st_.pc = st_.stack[0] & 0x7FF; st_.stack[0] = st_.stack[1]; break; } // RT
-                            case 0x72: break; // IX -- stub, no PLA wiring this phase
+                            case 0x72: st_.ix_executed = true; break; // IX -- stub, no PLA wiring this phase; flagged for the testbench
                             case 0x76: st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | st_.a); break; // LBA (MM78: no ram_delay)
                             case 0x77: st_.a = st_.a ^ 0xF; break; // COM
                             case 0x7A: { uint8_t tmp = st_.a; st_.a = st_.b & 0xF; st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | tmp); st_.ram_delay = true; break; } // XAB
@@ -323,7 +380,7 @@ void Mm77laModel::step() {
         }
     }
 
-    if (st_.tab_pending && op != 0x2C) {
+    if (tab_was_pending) {
         // TAB's effect fires after the FOLLOWING opcode has executed; since
         // we're already past that opcode's execution here, apply it now,
         // using the A value present after the intervening opcode ran (per
@@ -333,7 +390,13 @@ void Mm77laModel::step() {
         // 4-bit addition, rather than holding an out-of-range 0x10.
         st_.skip_count = static_cast<uint8_t>((st_.a + 1) & 0xF);
         st_.a = 0xF;
-        st_.tab_pending = false;
+        // Only clear tab_pending if THIS instruction didn't itself just
+        // re-arm it (op == 0x2C, a fresh TAB dispatched above) -- that fresh
+        // TAB's own tab_pending must stay armed for ITS delayed fire on the
+        // instruction after next. If op != 0x2C, tab_pending still holds
+        // tab_was_pending's true value untouched by dispatch, so clearing it
+        // here is exactly consuming the one delayed effect we just applied.
+        if (op != 0x2C) st_.tab_pending = false;
     }
 
     st_.prev3_op = st_.prev2_op;
