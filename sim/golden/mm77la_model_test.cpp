@@ -399,6 +399,47 @@ static void test_skip_continues_through_tr_prefixed_instruction() {
     CHECK(m.debug_rom_read(m.state().pc) == 0x00); // landed on the NOP, not mid-instruction
 }
 
+static void test_skip_consuming_tr_prefix_does_not_leave_prev_op_stale() {
+    // Regression for a real bug: after a skip consumes a TR-prefixed 2-byte
+    // instruction (TR; TL), prev_op must be updated to the LAST byte actually
+    // consumed (the TL byte), not the first (the TR byte). If prev_op is left
+    // as the stale TR byte, the very next real instruction gets misdispatched
+    // through the 2-byte SKBEI/SKAEI/TML/TL table instead of the normal
+    // 1-byte table -- e.g. a real TM (subroutine call) would be reinterpreted
+    // as TML and jump to a completely wrong address.
+    uint8_t rom[4] = {
+        0x7F,                              // SKMEA -- skips (A == RAM[0] by construction)
+        0x30,                              // TR (start of a 2-byte TL, to be skipped over)
+        static_cast<uint8_t>(0xC0 | 0x01), // TL 1 -- second byte of the skipped instruction
+        static_cast<uint8_t>(0x80 | 0x05), // TM 5 -- must execute as a REAL on-page TM call
+    };
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x5);
+    m.debug_set_b(0x00);
+    m.debug_ram_write(0x00, 0x5);
+    m.step(); // SKMEA: sets skip=true
+    m.step(); // consumes TR + TL bytes together (skip continuation)
+    CHECK(m.state().skip == false);
+    uint16_t pc_before_tm = m.state().pc; // should be sitting right on the TM byte
+    // Independently compute the LFSR-advanced return address TM should push
+    // (same recurrence used elsewhere in this file / in increment_pc()),
+    // rather than assuming naive +1 addressing.
+    uint16_t expect_return = pc_before_tm;
+    {
+        int feed = ((expect_return & 0x3e) == 0) ? 1 : 0;
+        feed ^= (expect_return >> 1 ^ expect_return) & 1;
+        expect_return = (expect_return & ~0x3f) | (expect_return >> 1 & 0x1f) | (feed << 5);
+    }
+    m.step(); // TM 5: must dispatch through the 1-byte table, not 2-byte TML
+    // Correct TM (on-page subroutine call, prgmask=0x7FF, x=5):
+    // pc = (0x7FF & ~0x3F) | (~5 & 0x3F) = 0x7C0 | 0x3A = 0x7FA.
+    // If misdispatched as TML using the stale prev_op (0x30), pc would come
+    // out as 0x3FA instead -- a completely different, wrong page/address.
+    CHECK(m.state().pc == 0x7FA);
+    CHECK(m.state().stack[0] == expect_return); // TM pushed the real return address
+}
+
 static void test_tab_fires_one_opcode_after_next() {
     // TAB (0x2C): the NEXT opcode executes first with A/skip_count unchanged,
     // THEN skip_count = A+1, A = 0xF fires (using the A value present when
@@ -453,6 +494,7 @@ int main() {
     test_sag_forces_ram_addr_upper_bits_to_3_for_one_cycle_only();
     test_tr_prefixed_tl_jumps_off_page();
     test_skip_continues_through_tr_prefixed_instruction();
+    test_skip_consuming_tr_prefix_does_not_leave_prev_op_stale();
     test_tab_fires_one_opcode_after_next();
     test_int1l_is_noop_but_flags_hit();
     if (failures == 0) { std::printf("PASS\n"); return 0; }

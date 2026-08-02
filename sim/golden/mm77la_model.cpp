@@ -133,16 +133,27 @@ void Mm77laModel::step() {
         st_.skip = false;
         // If what we just "executed" as a skip target is itself a TR prefix,
         // the skip must extend through the whole multi-byte instruction.
+        // Track the LAST byte actually consumed so prev_op/prev2_op/prev3_op
+        // end up exactly as they would if each byte had been fetched in its
+        // own separate step() call (which is what the non-skip path does,
+        // and what is_2byte/is_3byte dispatch on the following step() relies
+        // on) -- using the original TR byte here instead would leave prev_op
+        // stale as a TR prefix and misdispatch the NEXT real instruction
+        // through the 2-byte table.
+        uint8_t last_byte = op;
         if (op_is_tr(op)) {
             uint8_t op2 = rom_read(st_.pc);
             increment_pc();
+            last_byte = op2;
             if (op_is_tr(op2)) {
+                uint8_t op3 = rom_read(st_.pc);
                 increment_pc(); // consume the 3rd byte of a TLB/TMLB-under-skip too
+                last_byte = op3;
             }
         }
         st_.prev3_op = st_.prev2_op;
         st_.prev2_op = st_.prev_op;
-        st_.prev_op = op;
+        st_.prev_op = last_byte;
         if (st_.tab_pending) { st_.skip_count = static_cast<uint8_t>(st_.a + 1); st_.a = 0xF; st_.tab_pending = false; }
         return;
     }
