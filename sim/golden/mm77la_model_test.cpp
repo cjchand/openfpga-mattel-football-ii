@@ -381,13 +381,15 @@ static void test_skip_continues_through_tr_prefixed_instruction() {
     m.debug_ram_write(0x00, 0x5);
     m.step(); // SKMEA: sets skip=true
     CHECK(m.state().skip == true);
-    // The implemented skip-consumption (mm77la_model.cpp step()) consumes an
-    // entire TR-prefixed multi-byte instruction within the ONE step() call
-    // that fetches the TR byte, per Task 7's brief: it fetches the TR byte,
-    // sees op_is_tr(op), and immediately also fetches (and, if needed, a 3rd
-    // time for TLB/TMLB) the remaining byte(s) before returning. So a single
-    // step() call here consumes both the TR byte and the TL byte.
-    m.step(); // consumes TR + TL bytes together; skip clears at the end of this call
+    // The skip-consumption logic in mm77la_model.cpp step() consumes exactly
+    // ONE ROM byte per step() call, even during skip-continuation -- matching
+    // real per-cycle hardware fetch granularity and the RTL's structure. So
+    // the TR byte and the TL byte are each consumed in their own step() call:
+    // when the fetched byte is itself a TR prefix, skip is re-armed for the
+    // NEXT call rather than fetching ahead within this one.
+    m.step(); // consumes the TR byte only; skip re-arms since TR is itself a TR prefix
+    CHECK(m.state().skip == true);
+    m.step(); // consumes the TL byte; skip clears for real since TL is not a TR prefix
     CHECK(m.state().skip == false);
     // rom2 is only 4 bytes, so the constructor's small-ROM remap (see the
     // Mm77laModel constructor comment) applies: rom[i] is placed at the i-th
@@ -419,7 +421,8 @@ static void test_skip_consuming_tr_prefix_does_not_leave_prev_op_stale() {
     m.debug_set_b(0x00);
     m.debug_ram_write(0x00, 0x5);
     m.step(); // SKMEA: sets skip=true
-    m.step(); // consumes TR + TL bytes together (skip continuation)
+    m.step(); // consumes the TR byte only; skip re-arms
+    m.step(); // consumes the TL byte; skip clears for real
     CHECK(m.state().skip == false);
     uint16_t pc_before_tm = m.state().pc; // should be sitting right on the TM byte
     // Independently compute the LFSR-advanced return address TM should push
@@ -440,6 +443,73 @@ static void test_skip_consuming_tr_prefix_does_not_leave_prev_op_stale() {
     CHECK(m.state().stack[0] == expect_return); // TM pushed the real return address
 }
 
+static void test_aisk_skip_into_tr_tl_one_byte_per_step_no_double_consume() {
+    // Regression for the exact previously-diverging scenario reported by the
+    // Task 13 implementer (and confirmed by review): AISK sets skip, and the
+    // very next fetched byte is a TR prefix starting a 2-byte TL. This is a
+    // realistic, standard idiom -- "skip past a far jump target" -- since
+    // TL/TML/TLB/TMLB are the only way to reach off-page targets. Before the
+    // fix, the golden model consumed BOTH the TR and TL bytes within the
+    // single step() call that fetched the TR byte; the RTL, which can only
+    // fetch one ROM byte per clock, necessarily spreads that same
+    // consumption over two cycles/step() calls -- so PC would diverge by one
+    // step. This test asserts one-byte-per-step() consumption end to end.
+    uint8_t rom[4] = {
+        static_cast<uint8_t>(0x60 | 0x2), // AISK 2 -- A=0 so sum=2 < 0x10: sets skip=true
+        0x30,                              // TR (start of a 2-byte TL, to be skipped over)
+        static_cast<uint8_t>(0xC0 | 0x05), // TL 5 -- second byte of the skipped instruction
+        0x00,                              // NOP -- real execution should resume here
+    };
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x0);
+
+    m.step(); // AISK 2: A becomes 2, sets skip=true (sum=2 < 0x10)
+    CHECK(m.state().a == 0x2);
+    CHECK(m.state().skip == true);
+    uint16_t pc_after_aisk = m.state().pc;
+
+    m.step(); // consumes the TR byte only (one byte this step); skip re-arms
+    CHECK(m.state().skip == true);
+    uint16_t pc_after_tr = m.state().pc;
+    // Exactly one LFSR increment happened between the two step() calls above
+    // -- i.e. this call did not also fetch-ahead and consume the TL byte.
+    {
+        uint16_t expect = pc_after_aisk;
+        int feed = ((expect & 0x3e) == 0) ? 1 : 0;
+        feed ^= (expect >> 1 ^ expect) & 1;
+        expect = static_cast<uint16_t>((expect & ~0x3fu) | (expect >> 1 & 0x1f) | (feed << 5));
+        CHECK(pc_after_tr == expect);
+    }
+
+    m.step(); // consumes the TL byte; skip clears for real (TL is not a TR prefix)
+    CHECK(m.state().skip == false);
+    uint16_t pc_final = m.state().pc;
+    {
+        uint16_t expect = pc_after_tr;
+        int feed = ((expect & 0x3e) == 0) ? 1 : 0;
+        feed ^= (expect >> 1 ^ expect) & 1;
+        expect = static_cast<uint16_t>((expect & ~0x3fu) | (expect >> 1 & 0x1f) | (feed << 5));
+        CHECK(pc_final == expect);
+    }
+
+    // The TR;TL was SKIPPED, not executed: the final PC must be the address
+    // reached by simply advancing past all three bytes (AISK, TR, TL) via
+    // the LFSR sequence -- NOT the jump target TL 5 would have computed had
+    // it actually executed for real (((~0x30 & 0xF) << 6) | (~0x05 & 0x3F) =
+    // 0xFC0 & 0x7FF... i.e. TL's real jump formula). This confirms the jump
+    // was correctly voided by skip rather than accidentally taken.
+    uint16_t tl_jump_target_if_executed =
+        static_cast<uint16_t>(((~0x30 & 0xF) << 6) | (~0x05 & 0x3F));
+    CHECK(pc_final != tl_jump_target_if_executed);
+
+    // prev_op ends up as the TL byte (the last byte actually consumed), not
+    // the stale TR prefix -- so the next real instruction (the NOP) is
+    // correctly dispatched through the 1-byte table.
+    m.step(); // NOP
+    CHECK(m.state().skip == false); // NOP did not misdispatch as a 2-byte opcode
+}
+
 static void test_tab_fires_one_opcode_after_next() {
     // TAB (0x2C): the NEXT opcode executes first with A/skip_count unchanged,
     // THEN skip_count = A+1, A = 0xF fires (using the A value present when
@@ -452,6 +522,24 @@ static void test_tab_fires_one_opcode_after_next() {
     CHECK(m.state().skip_count == 0);
     m.step(); // NOP executes; TAB's delayed effect fires at the end of THIS step
     CHECK(m.state().skip_count == 0x3 + 1);
+    CHECK(m.state().a == 0xF);
+}
+
+static void test_tab_skip_count_wraps_at_4_bits_when_a_is_0xf() {
+    // Regression found via the lockstep testbench's 9-field comparison
+    // (Task 13 review Finding 2): skip_count is architecturally a 4-bit
+    // register (src/pps41_core.v: `reg [3:0] skip_count`). If A==0xF when
+    // TAB's delayed effect fires, A+1 == 0x10, which must wrap to 0x0 on
+    // real 4-bit hardware (and does in the RTL, whose addition is
+    // width-limited to 4 bits) -- NOT sit at an out-of-range 0x10 the way
+    // an unmasked uint8_t computation would.
+    uint8_t rom[2] = {0x2C, 0x00}; // TAB; NOP
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0xF);
+    m.step(); // TAB decoded; its effect has NOT applied yet
+    m.step(); // NOP executes; TAB's delayed effect fires at the end of THIS step
+    CHECK(m.state().skip_count == 0x0); // wraps, not 0x10
     CHECK(m.state().a == 0xF);
 }
 
@@ -495,7 +583,9 @@ int main() {
     test_tr_prefixed_tl_jumps_off_page();
     test_skip_continues_through_tr_prefixed_instruction();
     test_skip_consuming_tr_prefix_does_not_leave_prev_op_stale();
+    test_aisk_skip_into_tr_tl_one_byte_per_step_no_double_consume();
     test_tab_fires_one_opcode_after_next();
+    test_tab_skip_count_wraps_at_4_bits_when_a_is_0xf();
     test_int1l_is_noop_but_flags_hit();
     if (failures == 0) { std::printf("PASS\n"); return 0; }
     std::printf("%d FAILURE(S)\n", failures);

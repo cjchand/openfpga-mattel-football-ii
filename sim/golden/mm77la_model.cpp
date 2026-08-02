@@ -131,30 +131,40 @@ void Mm77laModel::step() {
     bool consumed_by_skip = st_.skip;
     if (consumed_by_skip) {
         st_.skip = false;
-        // If what we just "executed" as a skip target is itself a TR prefix,
-        // the skip must extend through the whole multi-byte instruction.
-        // Track the LAST byte actually consumed so prev_op/prev2_op/prev3_op
-        // end up exactly as they would if each byte had been fetched in its
-        // own separate step() call (which is what the non-skip path does,
-        // and what is_2byte/is_3byte dispatch on the following step() relies
-        // on) -- using the original TR byte here instead would leave prev_op
-        // stale as a TR prefix and misdispatch the NEXT real instruction
-        // through the 2-byte table.
-        uint8_t last_byte = op;
-        if (op_is_tr(op)) {
-            uint8_t op2 = rom_read(st_.pc);
-            increment_pc();
-            last_byte = op2;
-            if (op_is_tr(op2)) {
-                uint8_t op3 = rom_read(st_.pc);
-                increment_pc(); // consume the 3rd byte of a TLB/TMLB-under-skip too
-                last_byte = op3;
-            }
-        }
+        // Consume exactly ONE ROM byte per step() call, matching real
+        // per-cycle hardware fetch granularity and the RTL's structure (see
+        // the header comment in src/pps41_core.v). If the byte we just
+        // "executed" as a skip target is itself a TR prefix, the skip must
+        // extend through the remaining byte(s) of this multi-byte
+        // instruction -- but that continuation happens on the NEXT step()
+        // call, not by fetching ahead within this one. We simply re-arm
+        // st_.skip so the next call's consumed_by_skip check (at the top of
+        // this function) fires again on the next freshly-fetched byte.
+        //
+        // prev_op/prev2_op/prev3_op are shifted using `op` (the single byte
+        // fetched THIS call) on every pass through this block, so by the
+        // time skip actually clears for real (the `else` branch below, on a
+        // non-TR byte), the shift chain naturally holds the correct
+        // last-consumed byte -- exactly as if each byte had been fetched in
+        // its own separate step() call (which is what the non-skip path's
+        // is_2byte/is_3byte dispatch already assumes). No manual
+        // last-byte bookkeeping needed.
         st_.prev3_op = st_.prev2_op;
         st_.prev2_op = st_.prev_op;
-        st_.prev_op = last_byte;
-        if (st_.tab_pending) { st_.skip_count = static_cast<uint8_t>(st_.a + 1); st_.a = 0xF; st_.tab_pending = false; }
+        st_.prev_op = op;
+        if (op_is_tr(op)) {
+            // Skip continues into the NEXT step() call to consume the
+            // remaining byte(s) of this multi-byte instruction.
+            st_.skip = true;
+        } else if (st_.tab_pending) {
+            // skip_count is architecturally a 4-bit register (see
+            // src/pps41_core.v's `reg [3:0] skip_count`); mask with 0xF so
+            // A==0xF wraps to 0x0 exactly as the RTL's 4-bit addition does,
+            // instead of the golden model's uint8_t silently holding 0x10.
+            st_.skip_count = static_cast<uint8_t>((st_.a + 1) & 0xF);
+            st_.a = 0xF;
+            st_.tab_pending = false;
+        }
         return;
     }
 
@@ -297,8 +307,10 @@ void Mm77laModel::step() {
         // we're already past that opcode's execution here, apply it now,
         // using the A value present after the intervening opcode ran (per
         // docs/initial-plan.md §5.1's op_tab() semantics, which reads m_a at
-        // fire time).
-        st_.skip_count = static_cast<uint8_t>(st_.a + 1);
+        // fire time). skip_count is a 4-bit register (matching
+        // src/pps41_core.v); mask so A==0xF wraps to 0x0 like the RTL's
+        // 4-bit addition, rather than holding an out-of-range 0x10.
+        st_.skip_count = static_cast<uint8_t>((st_.a + 1) & 0xF);
         st_.a = 0xF;
         st_.tab_pending = false;
     }

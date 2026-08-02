@@ -54,6 +54,11 @@ int main(int argc, char** argv) {
         if (dut->a_out != g.a) { std::printf("cycle %ld: a mismatch rtl=%x golden=%x\n", i, dut->a_out, g.a); mismatch = true; }
         if (dut->b_out != g.b) { std::printf("cycle %ld: b mismatch rtl=%02x golden=%02x\n", i, dut->b_out, g.b); mismatch = true; }
         if (dut->skip_out != (g.skip ? 1 : 0)) { std::printf("cycle %ld: skip mismatch rtl=%d golden=%d\n", i, dut->skip_out, g.skip); mismatch = true; }
+        if (dut->c_out != (g.c ? 1 : 0)) { std::printf("cycle %ld: c mismatch rtl=%d golden=%d\n", i, dut->c_out, g.c); mismatch = true; }
+        if (dut->stack0_out != g.stack[0]) { std::printf("cycle %ld: stack0 mismatch rtl=%03x golden=%03x\n", i, dut->stack0_out, g.stack[0]); mismatch = true; }
+        if (dut->stack1_out != g.stack[1]) { std::printf("cycle %ld: stack1 mismatch rtl=%03x golden=%03x\n", i, dut->stack1_out, g.stack[1]); mismatch = true; }
+        if (dut->skip_count_out != g.skip_count) { std::printf("cycle %ld: skip_count mismatch rtl=%x golden=%x\n", i, dut->skip_count_out, g.skip_count); mismatch = true; }
+        if (dut->int1l_hit_out != (g.int1l_hit ? 1 : 0)) { std::printf("cycle %ld: int1l_hit mismatch rtl=%d golden=%d\n", i, dut->int1l_hit_out, g.int1l_hit); mismatch = true; }
         if (mismatch) { delete dut; return 1; }
     }
 

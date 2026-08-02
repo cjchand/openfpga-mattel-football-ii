@@ -43,7 +43,12 @@ module pps41_core (
     // Architectural outputs for the lockstep testbench.
     output wire [3:0]  a_out,
     output wire [6:0]  b_out,
-    output wire        skip_out
+    output wire        skip_out,
+    output wire        c_out,
+    output wire [10:0] stack0_out,
+    output wire [10:0] stack1_out,
+    output wire [3:0]  skip_count_out,
+    output wire        int1l_hit_out
 );
     reg [10:0] pc_reg;
     reg [6:0]  b_reg;
@@ -75,9 +80,14 @@ module pps41_core (
     assign ram_addr = sag ? {2'b11, b_reg[3:0]} : b_reg;
     /* verilator lint_on WIDTHEXPAND */
 
-    assign a_out    = a;
-    assign b_out    = b_reg;
-    assign skip_out = skip;
+    assign a_out          = a;
+    assign b_out          = b_reg;
+    assign skip_out       = skip;
+    assign c_out          = c;
+    assign stack0_out     = stack0;
+    assign stack1_out     = stack1;
+    assign skip_count_out = skip_count;
+    assign int1l_hit_out  = int1l_hit;
 
     // Sparse 96-nibble RAM map: real storage indices are picked with the
     // same bank logic as sim/golden/mm77la_model.cpp's ram_phys_index --
