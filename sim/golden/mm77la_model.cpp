@@ -71,6 +71,34 @@ uint8_t Mm77laModel::debug_ram_read(uint8_t addr) const { return ram_read(addr);
 void Mm77laModel::debug_ram_write(uint8_t addr, uint8_t val) { ram_write(addr, val); }
 uint8_t Mm77laModel::debug_rom_read(uint16_t addr) const { return rom_read(addr); }
 
+void Mm77laModel::debug_poke_rom(uint16_t addr, uint8_t value) {
+    // Apply the same address translation as rom_read() to get the actual offset
+    addr &= 0x7FF;
+    if (addr >= 0x600) addr -= 0x200; // 0x600-0x7FF mirrors 0x400-0x5FF
+
+    // Ensure rom_buffer_ is allocated and large enough to hold this address
+    // If rom_ is still pointing to the original input array (not rom_buffer_),
+    // we need to migrate to rom_buffer_ first to preserve existing content.
+    if (rom_buffer_.empty()) {
+        // First time using buffer: allocate and copy existing ROM content if needed
+        rom_buffer_.resize(std::max(static_cast<size_t>(addr + 1), rom_size_), 0x00);
+        // If rom_ was pointing to the original input, copy it to the buffer
+        if (rom_ != rom_buffer_.data()) {
+            for (size_t i = 0; i < rom_size_; i++) {
+                rom_buffer_[i] = rom_[i];
+            }
+        }
+    } else if (addr >= rom_buffer_.size()) {
+        // Buffer exists but needs to grow
+        rom_buffer_.resize(addr + 1, 0x00);
+    }
+
+    // Write the byte and repoint rom_ / rom_size_
+    rom_buffer_[addr] = value;
+    rom_ = rom_buffer_.data();
+    rom_size_ = rom_buffer_.size();
+}
+
 void Mm77laModel::increment_pc() {
     int feed = ((st_.pc & 0x3e) == 0) ? 1 : 0;
     feed ^= (st_.pc >> 1 ^ st_.pc) & 1;

@@ -199,29 +199,32 @@ static void test_i1sk_is_noop() {
 
 static void test_t_jumps_on_page_with_inverted_operand() {
     // T x encodes as 0xC0 | x; the destination low-6 bits are ~x & 0x3f.
-    uint8_t rom[1] = {static_cast<uint8_t>(0xC0 | 0x05)}; // T 5
+    uint8_t rom[1] = {0x00};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
     m.debug_set_pc(0x100);
+    m.debug_poke_rom(0x100, static_cast<uint8_t>(0xC0 | 0x05)); // T 5
     m.step();
     CHECK(m.state().pc == (0x100 | (~0x05 & 0x3F)));
 }
 
 static void test_tm_pushes_return_address_outside_subroutine_page() {
-    uint8_t rom[1] = {static_cast<uint8_t>(0x80 | 0x03)}; // TM 3
+    uint8_t rom[1] = {0x00};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
     m.debug_set_pc(0x040); // not in the subroutine page (top page is 0x780-0x7FF)
+    m.debug_poke_rom(0x040, static_cast<uint8_t>(0x80 | 0x03)); // TM 3
     m.step();
-    CHECK(m.state().stack[0] == 0x041); // return address = incremented PC before the jump
-    CHECK(m.state().pc == (0x7FF & ~0x3Fu & 0 | (~0x03 & 0x3F))); // page bits from prgmask&~0x3F combined with dest
+    CHECK(m.state().stack[0] == 0x060); // return address = incremented PC before the jump
+    CHECK(m.state().pc == ((0x7FF & ~0x3Fu) | (~0x03 & 0x3F))); // page bits from prgmask&~0x3F combined with dest
 }
 
 static void test_tm_from_subroutine_page_does_not_push() {
-    uint8_t rom[1] = {static_cast<uint8_t>(0x80 | 0x03)}; // TM 3
+    uint8_t rom[1] = {0x00};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
     m.debug_set_pc(0x7C0); // inside the subroutine page (top page, pc & ~0x7F == 0x780&~0x7F... )
+    m.debug_poke_rom(0x7C0, static_cast<uint8_t>(0x80 | 0x03)); // TM 3
     m.debug_set_stack0(0x000);
     m.step();
     CHECK(m.state().stack[0] == 0x000); // unchanged: calls from the subroutine page don't push

@@ -45,6 +45,12 @@ public:
     void debug_set_a(uint8_t a) { st_.a = a & 0xF; }
     void debug_set_b(uint8_t b) { st_.b = b & 0x7F; }
     void debug_set_stack0(uint16_t addr) { st_.stack[0] = addr & 0x7FF; }
+    // Test-only: place `value` at ROM address `addr` (after the same
+    // 0x600-0x7FF mirror reduction rom_read() applies), independent of the
+    // small-ROM sequential remap in the constructor. Used by tests that set
+    // PC to a specific address via debug_set_pc() and need a real opcode
+    // fetchable there, rather than relying on sequential-from-reset layout.
+    void debug_poke_rom(uint16_t addr, uint8_t value);
 
 private:
     uint8_t rom_read(uint16_t addr) const;
