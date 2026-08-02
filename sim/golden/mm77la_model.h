@@ -44,6 +44,7 @@ public:
     void debug_step_pc_only() { increment_pc(); }
     void debug_set_a(uint8_t a) { st_.a = a & 0xF; }
     void debug_set_b(uint8_t b) { st_.b = b & 0x7F; }
+    void debug_set_stack0(uint16_t addr) { st_.stack[0] = addr & 0x7FF; }
 
 private:
     uint8_t rom_read(uint16_t addr) const;

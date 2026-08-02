@@ -96,6 +96,26 @@ void Mm77laModel::step() {
             }
             break;
         }
+        case 0x80: { // TM x
+            constexpr uint16_t prgmask = 0x7FF;
+            bool in_subroutine_page = (st_.pc & ~0x7Fu) == (prgmask & ~0x7Fu);
+            if (!in_subroutine_page) {
+                st_.stack[1] = st_.stack[0];
+                st_.stack[0] = st_.pc;
+            }
+            uint8_t x = op & 0x3F;
+            st_.pc = static_cast<uint16_t>((prgmask & ~0x3Fu) | (~x & 0x3Fu));
+            break;
+        }
+        case 0xC0: { // T x
+            constexpr uint16_t prgmask = 0x7FF;
+            bool in_subroutine_page = (st_.pc & ~0x7Fu) == (prgmask & ~0x7Fu);
+            uint16_t pc = st_.pc;
+            if (in_subroutine_page) pc &= ~0x40u;
+            uint8_t x = op & 0x3F;
+            st_.pc = static_cast<uint16_t>((pc & ~0x3Fu) | (~x & 0x3Fu));
+            break;
+        }
         default: {
             switch (op & 0xFC) {
                 case 0x20: { // SB x
@@ -128,6 +148,17 @@ void Mm77laModel::step() {
                 default: {
                     switch (op) {
                         case 0x00: break; // NOP
+                        case 0x2E: { // RTSK
+                            st_.pc = st_.stack[0] & 0x7FF;
+                            st_.stack[0] = st_.stack[1];
+                            st_.skip = true;
+                            break;
+                        }
+                        case 0x2F: { // RT
+                            st_.pc = st_.stack[0] & 0x7FF;
+                            st_.stack[0] = st_.stack[1];
+                            break;
+                        }
                         case 0x76: { // LBA (MM78: no ram_delay)
                             st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | st_.a);
                             break;

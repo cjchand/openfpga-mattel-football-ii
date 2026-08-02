@@ -197,6 +197,55 @@ static void test_i1sk_is_noop() {
     CHECK(m.state().b == b_before);
 }
 
+static void test_t_jumps_on_page_with_inverted_operand() {
+    // T x encodes as 0xC0 | x; the destination low-6 bits are ~x & 0x3f.
+    uint8_t rom[1] = {static_cast<uint8_t>(0xC0 | 0x05)}; // T 5
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_pc(0x100);
+    m.step();
+    CHECK(m.state().pc == (0x100 | (~0x05 & 0x3F)));
+}
+
+static void test_tm_pushes_return_address_outside_subroutine_page() {
+    uint8_t rom[1] = {static_cast<uint8_t>(0x80 | 0x03)}; // TM 3
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_pc(0x040); // not in the subroutine page (top page is 0x780-0x7FF)
+    m.step();
+    CHECK(m.state().stack[0] == 0x041); // return address = incremented PC before the jump
+    CHECK(m.state().pc == (0x7FF & ~0x3Fu & 0 | (~0x03 & 0x3F))); // page bits from prgmask&~0x3F combined with dest
+}
+
+static void test_tm_from_subroutine_page_does_not_push() {
+    uint8_t rom[1] = {static_cast<uint8_t>(0x80 | 0x03)}; // TM 3
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_pc(0x7C0); // inside the subroutine page (top page, pc & ~0x7F == 0x780&~0x7F... )
+    m.debug_set_stack0(0x000);
+    m.step();
+    CHECK(m.state().stack[0] == 0x000); // unchanged: calls from the subroutine page don't push
+}
+
+static void test_rt_pops_stack() {
+    uint8_t rom[1] = {0x2F}; // RT
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_stack0(0x123);
+    m.step();
+    CHECK(m.state().pc == 0x123);
+}
+
+static void test_rtsk_pops_and_sets_skip() {
+    uint8_t rom[1] = {0x2E}; // RTSK
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_stack0(0x055);
+    m.step();
+    CHECK(m.state().pc == 0x055);
+    CHECK(m.state().skip == true);
+}
+
 int main() {
     test_reset_fills_ram_with_0xf();
     test_ram_bank_a_mirrors_at_48_and_58_not_50();
@@ -212,6 +261,11 @@ int main() {
     test_sb_rb_skbf_ram_bits();
     test_skmea_skips_when_a_equals_ram();
     test_i1sk_is_noop();
+    test_t_jumps_on_page_with_inverted_operand();
+    test_tm_pushes_return_address_outside_subroutine_page();
+    test_tm_from_subroutine_page_does_not_push();
+    test_rt_pops_stack();
+    test_rtsk_pops_and_sets_skip();
     if (failures == 0) { std::printf("PASS\n"); return 0; }
     std::printf("%d FAILURE(S)\n", failures);
     return 1;
