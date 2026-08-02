@@ -26,6 +26,11 @@ struct Mm77laState {
 
 class Mm77laModel {
 public:
+    // Constructor: Note that ROMs smaller than 0x100 bytes are internally remapped
+    // to account for the PC LFSR's non-sequential addressing pattern. This allows
+    // small test ROMs to work correctly even though step() jumps through PC values
+    // like 0 -> 0x20 -> 0x10 instead of 0 -> 1 -> 2. See implementation for details.
+    // Large ROMs (>= 0x100) use literal indexing without remapping.
     Mm77laModel(const uint8_t* rom, size_t rom_size);
     void reset();
     void step();

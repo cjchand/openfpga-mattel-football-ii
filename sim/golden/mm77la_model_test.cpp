@@ -178,6 +178,25 @@ static void test_skmea_skips_when_a_equals_ram() {
     CHECK(m.state().skip == true);
 }
 
+static void test_i1sk_is_noop() {
+    // I1SK (opcode 0x60, AISK with x==0) is a no-op in this task;
+    // real P-port I/O support comes in Task 5/7. Verify state is unchanged.
+    uint8_t rom[1] = {0x60}; // I1SK
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x7);
+    m.debug_set_b(0x3);
+    // Capture state before step
+    uint8_t a_before = m.state().a;
+    bool skip_before = m.state().skip;
+    uint8_t b_before = m.state().b;
+    m.step();
+    // Verify all state is unchanged after I1SK no-op
+    CHECK(m.state().a == a_before);
+    CHECK(m.state().skip == skip_before);
+    CHECK(m.state().b == b_before);
+}
+
 int main() {
     test_reset_fills_ram_with_0xf();
     test_ram_bank_a_mirrors_at_48_and_58_not_50();
@@ -192,6 +211,7 @@ int main() {
     test_aisk_skips_on_no_overflow_and_forces_no_skip_for_dc();
     test_sb_rb_skbf_ram_bits();
     test_skmea_skips_when_a_equals_ram();
+    test_i1sk_is_noop();
     if (failures == 0) { std::printf("PASS\n"); return 0; }
     std::printf("%d FAILURE(S)\n", failures);
     return 1;

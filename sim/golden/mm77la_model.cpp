@@ -3,16 +3,26 @@
 
 Mm77laModel::Mm77laModel(const uint8_t* rom, size_t rom_size)
     : rom_(rom), rom_size_(rom_size) {
-    // For small test ROMs (< 0x100 bytes), allocate a larger buffer and remap
-    // the ROM bytes to their PC sequence addresses. This allows test ROMs to
-    // work correctly with the PC LFSR that doesn't increment sequentially.
+    // ROM Remapping for Small Test ROMs (Task 4 and later test harness only):
+    //
+    // The PC is a 6-bit LFSR that sequences non-sequentially: 0 -> 0x20 -> 0x10 -> 0x08 ...
+    // For small test ROMs (< 0x100 bytes), this means a sequential test ROM {0x47, 0x76}
+    // would fail: step() 1 accesses rom[0], step() 2 tries to access rom[0x20] (out of bounds).
+    //
+    // To make tests work, we allocate a 0x100-byte buffer and remap each input ROM byte
+    // to the address it will actually be accessed at during the PC sequence. So rom[0]
+    // goes to buffer[0x00], rom[1] goes to buffer[0x20], rom[2] to buffer[0x10], etc.
+    //
+    // This remapping is ONLY done for ROMs < 0x100 bytes. Production ROMs (0x100+ bytes)
+    // use literal indexing without remapping. If Task 14's real ROM is < 0x100 bytes,
+    // this remapping will apply to it silently — beware.
     if (rom_size < 0x100) {
         rom_buffer_.resize(0x100, 0x00);
         // Compute PC sequence and place ROM bytes at their accessed addresses
         uint16_t pc = 0;
         for (size_t i = 0; i < rom_size; i++) {
             rom_buffer_[pc & 0xFF] = rom[i];
-            // Compute next PC using the LFSR formula
+            // Compute next PC using the LFSR formula (same as increment_pc())
             int feed = ((pc & 0x3e) == 0) ? 1 : 0;
             feed ^= (pc >> 1 ^ pc) & 1;
             pc = static_cast<uint16_t>((pc & ~0x3fu) | (pc >> 1 & 0x1f) | (feed << 5));
@@ -77,11 +87,13 @@ void Mm77laModel::step() {
             st_.a = op & 0xF;
             break;
         }
-        case 0x60: { // AISK x (x!=0) handled here; I1SK (x==0) is Task 5/7 I/O work
+        case 0x60: { // AISK x (x!=0); I1SK (x==0) is Task 5/7 I/O work, left as no-op here
             uint8_t x = op & 0xF;
-            uint8_t sum = static_cast<uint8_t>(st_.a + x);
-            st_.a = sum & 0xF;
-            st_.skip = (x == 6) ? false : (sum < 0x10);
+            if (x != 0) {
+                uint8_t sum = static_cast<uint8_t>(st_.a + x);
+                st_.a = sum & 0xF;
+                st_.skip = (x == 6) ? false : (sum < 0x10);
+            }
             break;
         }
         default: {
