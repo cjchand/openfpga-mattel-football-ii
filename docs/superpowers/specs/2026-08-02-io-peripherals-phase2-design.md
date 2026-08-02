@@ -97,6 +97,27 @@ hand-edits the generated files. `pps41_opla.v`/`mm77la_opla.*` consume the
 generated table, not the raw `.pla` text — no runtime Berkeley-PLA parsing
 in either model.
 
+**PLA row/bit ordering, confirmed against MAME's `pla_device::read()`/
+`pla_parse()` (`src/devices/machine/pla.cpp`, `src/lib/util/plaparse.cpp`):**
+rows in the `.pla` file are **not** in binary-counting order (they're a
+Gray-code-like enumeration: `0000,1000,1100,0100,0010,...`) — a lookup table
+generator must match each row by its literal input pattern, not by file
+line order. Within a row, the **leftmost input character is bit 0 (LSB) of
+A**, not the MSB (e.g. row `"1000 ..."` is A=1, not A=8) — confirmed by
+tracing `plaparse.cpp`'s per-column fuse emission into `pla.cpp`'s
+`(term->and_mask | inputs) == input_mask` match against `read(input)`'s bit-`i`-of-`input`
+extraction. Output columns map directly, left-to-right = bit 0..9 (no
+inversion — `plaparse.cpp`'s double negation on the OR-matrix fuses cancels
+out). `tools/gen_opla_table.py` (§2 below) must implement exactly this:
+build a 16-entry `A -> raw_10bit` dict keyed by literal input value, not by
+row position. Verified end-to-end against `development-assets/mm77la_mfootb2_output.pla`:
+applying this parse, then `IX`'s `~raw & 0x3FF` and
+`bitswap<10>(out, 9,7,5,3,1,0,2,4,6,8)`, gives `A=0x0 -> r_output=0x03F`
+(`0b0111111`, the standard 7-segment "0" pattern) and `A=0xF -> r_output=0x000`
+(blank/all-off, consistent with `TAB`/other code using `A=0xF` as a "blank
+digit" sentinel elsewhere in the ISA) — both sane, corroborating results,
+not just an unverified transcription.
+
 `IX`'s exact behavior (`docs/initial-plan.md` MM77LA-tier override),
 transcribed literally including the non-obvious bitswap (bit 8's position is
 intentionally reused, not a typo — do not "clean up" the pattern):
@@ -109,7 +130,14 @@ r_output = bitswap<10>(out, 9,7,5,3,1,0,2,4,6,8);
 ## 3. Port I/O and interrupts
 
 `pps41_io.v`/`mm77la_io.*` model:
-- **P** (8-bit input: buttons/D-pad) — read via `I1`/`I2C`.
+- **P** (8-bit input: buttons/D-pad) — read via `I1SK`/`I2C`. (Correction:
+  plain `I1` doesn't exist on MM77LA per the resolved byte-map above — `I1SK`
+  at opcode `0x60` exactly, `mm78op.cpp::op_i1sk()`: `A += P_input & 0xF; skip
+  if no overflow`, is the chip's only P-port-reading opcode. Phase 1 stubbed
+  `0x60`-exact as a no-op pending this phase; Phase 2 implements it for
+  real. Since it's the *only* reachable P-port read, it's almost certainly
+  the ROM's actual button-polling mechanism — directly relevant to the
+  idle-loop investigation below.)
 - **D** (12-bit: digit-select output + difficulty-switch input) — written
   via the `write_d` path's opcodes, read back for the difficulty switch.
 - **R** (10-bit output, driven either directly via `IOA`/`OX` or through the
@@ -125,15 +153,69 @@ input sequences (e.g. "hold Score button from cycle N") that
 `pps41_core_tb.cpp` can apply during a lockstep run, used for the idle-loop
 investigation (see Scope above and §5).
 
-**Open item to resolve during plan-writing, not here:** `docs/initial-plan.md`'s
-final fully-decoded MM78-tier opcode table (the one with exact byte values,
-e.g. `0x00`=NOP, `0x2D`=IOS, `0x70`=SOS) does not show explicit byte
-assignments for the base MM76-tier ops `IBM`/`OB`/`IAM`/`OA`/`I1`/`INT1H`/
-`DIN1`/`INT0L`/`DIN0` — only their semantics are given. This needs pinning
-down against the doc's fuller opcode-map section or MAME's
-`rw5000op.cpp`/`mm78.cpp` source directly (the same discipline Phase 1
-repeatedly used) when the implementation plan's task briefs are written —
-not guessed at here.
+**Resolved during plan-writing (2026-08-02), against MAME master
+`src/devices/cpu/pps41/{mm76,mm76op,mm78,mm78op,mm78la,mm78laop,pps41base}.cpp`:**
+
+`IBM`/`OB`/`IAM`/`OA`/`I1`/`INT1H`(old MM76 meaning)/`DIN1`/`INT0L`(old MM76
+meaning)/`DIN0` are **not part of MM77LA's opcode map at all**. MM76's
+`execute_one()` dispatch tree calls these handlers directly by opcode byte,
+but MM78's `execute_one()` (which MM77LA inherits wholesale, per
+`docs/initial-plan.md` §2) has a completely different, non-overlapping
+fully-decoded table — it never calls `op_ibm`/`op_ob`/`op_iam`/`op_oa`/`op_i1`/
+`op_int1h`/`op_din1`/`op_int0l`/`op_din0` anywhere, at any byte value. These
+are MM76-only opcodes, unreachable once the ISA moves to the MM78-tier
+dispatch tree. Do not implement them; there is no byte value to assign.
+
+This also resolves a related, non-obvious consequence for `SOS`/`ROS`/
+`SKISL`'s "D-output-pin vs interrupt-flag" branch (`docs/initial-plan.md`
+§5.2, MM78 tier): the branch is `if (bl < d_pins) -> D-pin; else if (bl < 12)
+-> interrupt flip-flop; else -> invalid`. MM77LA's `d_pins` is 12 (inherited
+from `mm78la_device::device_start()`'s `set_d_pins(12)`, never overridden by
+`mm77la_device`) — meaning `bl < d_pins` (12) already covers every `bl` value
+that could also satisfy `bl < 12`. **The interrupt-flip-flop branch is dead
+code on this specific chip**: `SOS`/`ROS`/`SKISL` can only ever target D-pins
+(`bl` 0-11) or hit the invalid case (`bl` 12-15), never the flip-flop path.
+Combined with `DIN0`/`DIN1` not existing (above) and MM78LA's tier overriding
+`INT0H` to a speaker toggle (no longer a skip-test) and `INT1L` to
+`op_todo()` (unimplemented no-op) — **and `mfootb2`'s machine config in
+`hh_pps41.cpp` never wires up `PPS41_INPUT_LINE_INT0`/`INT1` to anything** —
+the `m_int_ff`/`m_int_line` interrupt-flag machinery is entirely inert on
+Football II. There is no functional interrupt-flag skip-test opcode on this
+chip at all. Implement `SOS`/`ROS`/`SKISL`'s full branch faithfully anyway
+(matching MAME source exactly, including the unreachable branch and the
+`ram_addr & 0x40` "B7 must be low" invalid-access guard) rather than
+special-casing it away — cheap to transcribe, and it documents the dead path
+instead of silently deleting it. Practical upshot: the Phase 1 idle-loop
+hypothesis's "escape via interrupts" reading is now ruled out with evidence;
+if anything unsticks the ROM's loop, it has to be P-port polling
+(`AISK`/`I1SK` reading channel 1, or `I2C` reading channel 2), which is
+exactly what this phase's stimulus-driven investigation (§5) tests.
+
+Byte values actually reachable and in this phase's scope, confirmed against
+MAME's `mm78.cpp::execute_one()` fully-decoded switch: `SKISL`=`0x01`,
+`INT0H`=`0x03` (repurposed to speaker toggle at the MM78LA tier — see §4),
+`IOS`=`0x2D`, `SOS`=`0x70`, `ROS`=`0x71`, `IX`=`0x72`, `OX`=`0x73`,
+`I2C`=`0x78` (unchanged from MM76: `A = ~read_p() >> 4 & 0xF`, reads the P
+port, not R), `IOA`=`0x7B`. `INT1L`=`0x04` was already correctly handled as a
+flagged no-op in Phase 1 (matches MM78LA's `op_todo()`) — no change needed.
+
+One adjacent, genuinely out-of-scope gap surfaced by this same source read:
+`LXA`(`0x75`)/`XAX`(`0x79`)/`XAS`(`0x74`) are general MM78-tier register
+opcodes (not I/O), currently unimplemented (silently fall through as NOP) in
+both Phase 1's golden model and RTL. They're not part of this phase's I/O
+scope per this spec's own Scope section, so Phase 2 does not implement them —
+but Phase 2's real-ROM lockstep run adds an explicit "unimplemented opcode
+dispatched" flag (mirroring the existing `int1l_hit` pattern) so this gap is
+empirically confirmed hit-or-not-hit rather than silently assumed harmless.
+If the real ROM does hit one, that's a finding for a follow-up task, not
+something to silently patch here.
+
+Confirmed against MAME source: `IOA`/`OX` (MM78LA tier, `mm78laop.cpp`) use
+the **delayed carry `m_c_in`**, not the immediate carry, in their
+`(carry<<4 | A)` field — same `c_in_eff` value already threaded through
+`src/pps41_core.v`'s ALU path in Phase 1, not a new signal. `R` output resets
+to **all-1s** (`m_r_output = m_r_mask` in `pps41_base_device::device_reset()`),
+not zero — get this reset value right, it differs from `D`'s reset-to-zero.
 
 ## 4. Tone generator
 
@@ -153,6 +235,22 @@ tier override:
 - `INT0H` (repurposed at the final MM78LA tier from a skip-test to directly
   toggling the speaker output) lives here too, since it's the same
   subsystem.
+
+Confirmed exact details against `mm78laop.cpp`/`mm78la.h`/`mm78la.cpp` (all
+fields are 8-bit `u8`, not wider): the arming check reads `m_ios_state`
+**before** incrementing it (`if (m_ios_state == 1) { arm } else { disarm };
+m_ios_state = (m_ios_state + 1) % 3`) — i.e. arming happens on the *second*
+`IOS` call after a reset/disarm, not the first. `reset_tone_count()` sets the
+counter to **1**, not 0. `m_tone_count` free-runs (increments) **every
+single cycle unconditionally**, even while `tone_on` is false — the `tone_on`
+gate only controls whether a counter-match triggers `toggle_speaker()`, not
+whether the counter itself advances. The speaker level register
+(`m_spk_output`) initializes to **2** (`device_start`) and `toggle_speaker()`
+does `m_spk_output ^= 3`, which — starting from 2 — perpetually alternates
+between index 2 (level `-1.0`) and index 1 (level `+1.0`) in the
+`{0.0, 1.0, -1.0, 0.0}` levels table; it never revisits index 0 or 3. Model
+this as a 2-bit register with that exact init value and XOR, not a plain
+toggle bit.
 
 Only the internal state machine and a single-bit speaker toggle output are
 modeled this phase. Real PWM/I2S audio-DAC conversion for Analogue Pocket
