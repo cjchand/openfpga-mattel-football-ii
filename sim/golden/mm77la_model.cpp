@@ -106,13 +106,27 @@ void Mm77laModel::increment_pc() {
 }
 
 void Mm77laModel::step() {
-    uint16_t ram_addr = st_.b; // ram_delay override handled in Task 8
+    // Capture and consume any carry-delay flag pending from a PRIOR
+    // instruction before this instruction's own switch (which may set
+    // c_delay again, e.g. for AC/ACSK) runs -- otherwise the flag would be
+    // applied within the same step() call that set it, one cycle too early.
+    bool apply_c_delay = st_.c_delay;
+    st_.c_delay = false;
+
+    uint16_t ram_addr = st_.sag ? (0x30 | (st_.b & 0xF)) : st_.b;
+    st_.sag = false; // exactly one cycle of effect
     uint8_t op = rom_read(st_.pc);
     increment_pc();
 
     switch (op & 0xF0) {
-        case 0x40: { // LAI x
-            st_.a = op & 0xF;
+        case 0x40: { // LAI x, with coalescing suppression
+            bool suppressed = (st_.prev_op & 0xF0) == 0x40;
+            if (!suppressed) st_.a = op & 0xF;
+            break;
+        }
+        case 0x10: { // LB x
+            bool suppressed = (st_.prev_op & 0xF0) == 0x10;
+            if (!suppressed) st_.b = op & 0xF;
             break;
         }
         case 0x60: { // AISK x (x!=0); I1SK (x==0) is Task 5/7 I/O work, left as no-op here
@@ -146,6 +160,33 @@ void Mm77laModel::step() {
         }
         default: {
             switch (op & 0xFC) {
+                case 0x08: { // EOB x (op & 0xFC == 0x08 covers 0x08-0x0B, x = op & 0x3)
+                    bool suppressed = (st_.prev_op & 0xFC) == 0x08;
+                    if (!suppressed) st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
+                    break;
+                }
+                case 0x58: { // XDSK x
+                    uint8_t tmp = ram_read(static_cast<uint8_t>(ram_addr));
+                    ram_write(static_cast<uint8_t>(ram_addr), st_.a);
+                    st_.a = tmp;
+                    uint8_t bl = static_cast<uint8_t>(((st_.b & 0xF) - 1) & 0xF);
+                    st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | bl);
+                    st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
+                    st_.ram_delay = true;
+                    st_.skip = (bl == 0xF);
+                    break;
+                }
+                case 0x54: { // XNSK x
+                    uint8_t tmp = ram_read(static_cast<uint8_t>(ram_addr));
+                    ram_write(static_cast<uint8_t>(ram_addr), st_.a);
+                    st_.a = tmp;
+                    uint8_t bl = static_cast<uint8_t>(((st_.b & 0xF) + 1) & 0xF);
+                    st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | bl);
+                    st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
+                    st_.ram_delay = true;
+                    st_.skip = (bl == 0x0);
+                    break;
+                }
                 case 0x20: { // SB x
                     uint8_t val = ram_read(static_cast<uint8_t>(ram_addr));
                     ram_write(static_cast<uint8_t>(ram_addr), val | (1 << (op & 0x3)));
@@ -176,6 +217,14 @@ void Mm77laModel::step() {
                 default: {
                     switch (op) {
                         case 0x00: break; // NOP
+                        case 0x07: { // SAG
+                            st_.sag = true;
+                            break;
+                        }
+                        case 0x02: { // SKNC
+                            st_.skip = (st_.c_in == 0);
+                            break;
+                        }
                         case 0x2E: { // RTSK
                             st_.pc = st_.stack[0] & 0x7FF;
                             st_.stack[0] = st_.stack[1];
@@ -206,16 +255,18 @@ void Mm77laModel::step() {
                             st_.a = static_cast<uint8_t>((st_.a + ram_read(static_cast<uint8_t>(ram_addr))) & 0xF);
                             break;
                         }
-                        case 0x7C: { // AC -- carry write only; delay visibility is Task 8
+                        case 0x7C: { // AC
                             uint8_t sum = static_cast<uint8_t>(st_.a + ram_read(static_cast<uint8_t>(ram_addr)) + st_.c_in);
                             st_.c = (sum >> 4) & 1;
                             st_.a = sum & 0xF;
+                            st_.c_delay = true;
                             break;
                         }
                         case 0x7D: { // ACSK -- MM78: skip if NEW carry (inverted vs MM76)
                             uint8_t sum = static_cast<uint8_t>(st_.a + ram_read(static_cast<uint8_t>(ram_addr)) + st_.c_in);
                             st_.c = (sum >> 4) & 1;
                             st_.a = sum & 0xF;
+                            st_.c_delay = true;
                             st_.skip = st_.c != 0;
                             break;
                         }
@@ -231,6 +282,10 @@ void Mm77laModel::step() {
             }
             break;
         }
+    }
+
+    if (apply_c_delay) {
+        st_.c_in = st_.c;
     }
 
     st_.prev3_op = st_.prev2_op;

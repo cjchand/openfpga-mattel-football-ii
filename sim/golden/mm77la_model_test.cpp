@@ -249,6 +249,81 @@ static void test_rtsk_pops_and_sets_skip() {
     CHECK(m.state().skip == true);
 }
 
+static void test_lb_then_eob_coalesce_as_a_pair() {
+    // LB x is 0x10|x; EOB x is 0x08|x (2-bit immediate). A direct LB;EOB pair
+    // is the documented non-suppressed case -- EOB after LB should still apply.
+    uint8_t rom[2] = {static_cast<uint8_t>(0x10 | 0x5), static_cast<uint8_t>(0x08 | 0x2)};
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.step(); // LB 5 -> B = 5
+    CHECK(m.state().b == 0x5);
+    m.step(); // EOB 2 -> Bu ^= (2<<4)
+    CHECK(m.state().b == (0x5 ^ 0x20));
+}
+
+static void test_successive_lai_coalescing_suppresses_repeat() {
+    // Per docs/initial-plan.md §5.2: "LAI x: A = x, UNLESS prev op was a
+    // non-suppressed LAI." Two back-to-back LAI's: the second is suppressed
+    // (A keeps the first value), matching MAME's coalescing behavior.
+    uint8_t rom[2] = {0x43, 0x47}; // LAI 3; LAI 7
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.step(); // A = 3
+    CHECK(m.state().a == 0x3);
+    m.step(); // suppressed: A stays 3, NOT 7
+    CHECK(m.state().a == 0x3);
+}
+
+static void test_lai_after_non_lai_is_not_suppressed() {
+    uint8_t rom[2] = {0x00, 0x47}; // NOP; LAI 7
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.step(); // NOP
+    m.step(); // LAI 7 -- prev op was NOP, not suppressed
+    CHECK(m.state().a == 0x7);
+}
+
+static void test_ac_carry_visible_to_sknc_only_after_one_instruction_delay() {
+    uint8_t rom[3] = {0x7C, 0x00, 0x02}; // AC; NOP; SKNC
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0xF);
+    m.debug_set_b(0x00);
+    m.debug_ram_write(0x00, 0x2); // 0xF + 0x2 = 0x11 -> carry out = 1
+    m.step(); // AC: new carry computed, but c_in not yet updated
+    CHECK(m.state().c_in == 0); // not visible yet
+    m.step(); // NOP: this is the instruction after which c_in updates
+    m.step(); // SKNC reads c_in
+    CHECK(m.state().skip == false); // c_in should now be 1 -> SKNC (skip if carry==0) does NOT skip
+}
+
+static void test_xdsk_sets_ram_delay_and_skips_on_wrap_to_f() {
+    uint8_t rom[1] = {static_cast<uint8_t>(0x58 | 0x1)}; // XDSK 1
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x9);
+    m.debug_set_b(0x00); // Bl = 0, decrementing wraps to 0xF
+    m.debug_ram_write(0x00, 0x2);
+    m.step();
+    CHECK(m.state().ram_delay == true);
+    CHECK((m.state().b & 0xF) == 0xF); // Bl wrapped
+    CHECK(m.state().skip == true);     // skip because it wrapped
+}
+
+static void test_sag_forces_ram_addr_upper_bits_to_3_for_one_cycle_only() {
+    // SB writes RAM[ram_addr]; with SAG active, ram_addr upper bits (Bu) are
+    // forced to 3 for exactly the next cycle, regardless of B's real value.
+    uint8_t rom[2] = {0x07, static_cast<uint8_t>(0x20 | 0x1)}; // SAG; SB 1
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_b(0x05); // Bu would normally be 0, not 3
+    m.debug_ram_write(0x35, 0x0); // address with Bu=3, Bl=5
+    m.step(); // SAG
+    m.step(); // SB 1, should target RAM[0x35] because of SAG, not RAM[0x05]
+    CHECK(m.debug_ram_read(0x35) == 0x2);
+    CHECK(m.debug_ram_read(0x05) == 0xF); // untouched (still reset value)
+}
+
 int main() {
     test_reset_fills_ram_with_0xf();
     test_ram_bank_a_mirrors_at_48_and_58_not_50();
@@ -269,6 +344,12 @@ int main() {
     test_tm_from_subroutine_page_does_not_push();
     test_rt_pops_stack();
     test_rtsk_pops_and_sets_skip();
+    test_lb_then_eob_coalesce_as_a_pair();
+    test_successive_lai_coalescing_suppresses_repeat();
+    test_lai_after_non_lai_is_not_suppressed();
+    test_ac_carry_visible_to_sknc_only_after_one_instruction_delay();
+    test_xdsk_sets_ram_delay_and_skips_on_wrap_to_f();
+    test_sag_forces_ram_addr_upper_bits_to_3_for_one_cycle_only();
     if (failures == 0) { std::printf("PASS\n"); return 0; }
     std::printf("%d FAILURE(S)\n", failures);
     return 1;
