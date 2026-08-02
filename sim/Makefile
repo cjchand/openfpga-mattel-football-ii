@@ -3,7 +3,7 @@ VERILATOR := verilator
 CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
-.PHONY: lint-core golden-test golden-trace decode-test alu-test clean
+.PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test clean
 
 lint-core:
 	$(VERILATOR) --lint-only -Wall ../src/pps41_core.v
@@ -26,6 +26,12 @@ alu-test:
 		--Mdir obj_dir_alu -Wall
 	$(MAKE) -C obj_dir_alu -f Vpps41_alu.mk
 	./obj_dir_alu/Vpps41_alu
+
+core-pc-test:
+	$(VERILATOR) --cc ../src/pps41_core.v --exe pps41_core_pc_tb.cpp \
+		--Mdir obj_dir_core_pc -Wall --Wno-UNUSEDSIGNAL
+	$(MAKE) -C obj_dir_core_pc -f Vpps41_core.mk
+	./obj_dir_core_pc/Vpps41_core
 
 clean:
 	rm -rf obj_dir* /tmp/mm77la_model_test
