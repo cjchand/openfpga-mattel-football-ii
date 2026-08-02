@@ -38,6 +38,9 @@ int main(int argc, char** argv) {
     tick(dut);
     dut->rst_n = 1;
 
+    long ix_hit_count = 0;
+    bool int1l_ever_hit = false;
+
     for (long i = 0; i < cycles; i++) {
         // ROM is combinationally addressed: present this cycle's byte before the edge.
         uint16_t addr = dut->rom_addr;
@@ -48,6 +51,9 @@ int main(int argc, char** argv) {
 
         golden.step();
         const auto& g = golden.state();
+
+        if (g.prev_op == 0x72) ix_hit_count++;
+        if (g.int1l_hit) int1l_ever_hit = true;
 
         bool mismatch = false;
         if (dut->pc != g.pc) { std::printf("cycle %ld: pc mismatch rtl=%03x golden=%03x\n", i, dut->pc, g.pc); mismatch = true; }
@@ -63,6 +69,8 @@ int main(int argc, char** argv) {
     }
 
     std::printf("PASS: %ld cycles, no mismatches\n", cycles);
+    std::printf("INT1L observed: %s; IX executed: %ld time(s)\n",
+                 int1l_ever_hit ? "yes" : "no", ix_hit_count);
     delete dut;
     return 0;
 }

@@ -128,3 +128,11 @@ assertion, not core logic.
 - Clock frequency (~380kHz) is an RC-oscillator approximation, not
   crystal-accurate — irrelevant to Phase 1's cycle-accuracy work (which is
   measured in core cycles, not wall-clock time) but will matter later.
+- Task 15 real-ROM observation (200,000-cycle lockstep run against
+  `development-assets/b8000-12`, zero register/skip mismatches): `INT1L`
+  never fired (0 hits), so the real-hardware-behavior question above remains
+  genuinely open/unresolved rather than confirmed either way. `IX` fired
+  8,695 times over 200,000 cycles (216 times in just the first 5,000),
+  confirming it is a heavily-used, hot-path instruction in the real Football
+  II ROM — Phase 2's PLA/`IX` wiring is squarely on the critical path, not an
+  edge case.
