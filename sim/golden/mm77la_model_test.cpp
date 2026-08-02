@@ -349,6 +349,81 @@ static void test_sag_forces_ram_addr_upper_bits_to_3_for_one_cycle_only() {
     CHECK(m.debug_ram_read(0x05) == 0xF); // untouched (still reset value)
 }
 
+static void test_tr_prefixed_tl_jumps_off_page() {
+    // TR (0x30) then TL x: 2-byte form. pc = (~prev_op & 0xF)<<6 | (~op & 0x3F)
+    uint8_t rom[2] = {0x30, static_cast<uint8_t>(0xC0 | 0x05)}; // TR; TL 5
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.step(); // TR: prefix only, no direct effect
+    m.step(); // TL 5, dispatched because prev_op was TR
+    uint16_t expected = static_cast<uint16_t>(((~0x30 & 0xF) << 6) | (~0xC5 & 0x3F));
+    CHECK(m.state().pc == expected);
+}
+
+static void test_skip_continues_through_tr_prefixed_instruction() {
+    // If an opcode sets skip, and the NEXT fetched opcode is itself a TR
+    // prefix, skipping must continue through the whole 2-byte instruction,
+    // not just the TR byte.
+    uint8_t rom[4] = {
+        0x66,             // AISK 6 (DC) -- NOT what we want, use SKMEA instead below
+    };
+    (void)rom;
+    uint8_t rom2[4] = {
+        0x7F,             // SKMEA -- will skip since A==RAM by construction
+        0x30,             // TR (start of a 2-byte TL)
+        static_cast<uint8_t>(0xC0 | 0x01), // TL 1 -- second byte of the skipped instruction
+        0x00,             // NOP -- execution should resume here
+    };
+    Mm77laModel m(rom2, sizeof(rom2));
+    m.reset();
+    m.debug_set_a(0x5);
+    m.debug_set_b(0x00);
+    m.debug_ram_write(0x00, 0x5);
+    m.step(); // SKMEA: sets skip=true
+    CHECK(m.state().skip == true);
+    // The implemented skip-consumption (mm77la_model.cpp step()) consumes an
+    // entire TR-prefixed multi-byte instruction within the ONE step() call
+    // that fetches the TR byte, per Task 7's brief: it fetches the TR byte,
+    // sees op_is_tr(op), and immediately also fetches (and, if needed, a 3rd
+    // time for TLB/TMLB) the remaining byte(s) before returning. So a single
+    // step() call here consumes both the TR byte and the TL byte.
+    m.step(); // consumes TR + TL bytes together; skip clears at the end of this call
+    CHECK(m.state().skip == false);
+    // rom2 is only 4 bytes, so the constructor's small-ROM remap (see the
+    // Mm77laModel constructor comment) applies: rom[i] is placed at the i-th
+    // address of the PC LFSR sequence starting from 0, i.e. 0x00, 0x20, 0x10,
+    // 0x08, ... regardless of ROM size. rom2[3] (the NOP) therefore lives at
+    // buffer address 0x08, NOT literal address 3 -- a literal "pc == 3" check
+    // would not correspond to any reachable PC value under this remap.
+    CHECK(m.state().pc == 0x08);
+    CHECK(m.debug_rom_read(m.state().pc) == 0x00); // landed on the NOP, not mid-instruction
+}
+
+static void test_tab_fires_one_opcode_after_next() {
+    // TAB (0x2C): the NEXT opcode executes first with A/skip_count unchanged,
+    // THEN skip_count = A+1, A = 0xF fires (using the A value present when
+    // TAB itself was decoded).
+    uint8_t rom[2] = {0x2C, 0x00}; // TAB; NOP
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x3);
+    m.step(); // TAB decoded; its effect has NOT applied yet
+    CHECK(m.state().skip_count == 0);
+    m.step(); // NOP executes; TAB's delayed effect fires at the end of THIS step
+    CHECK(m.state().skip_count == 0x3 + 1);
+    CHECK(m.state().a == 0xF);
+}
+
+static void test_int1l_is_noop_but_flags_hit() {
+    uint8_t rom[1] = {0x04}; // INT1L (0x04 per the MM78 opcode table)
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x3);
+    m.step();
+    CHECK(m.state().a == 0x3);      // no architectural effect
+    CHECK(m.state().int1l_hit == true); // but flagged for the testbench
+}
+
 int main() {
     test_reset_fills_ram_with_0xf();
     test_ram_bank_a_mirrors_at_48_and_58_not_50();
@@ -376,6 +451,10 @@ int main() {
     test_back_to_back_ac_does_not_lose_first_pending_carry();
     test_xdsk_sets_ram_delay_and_skips_on_wrap_to_f();
     test_sag_forces_ram_addr_upper_bits_to_3_for_one_cycle_only();
+    test_tr_prefixed_tl_jumps_off_page();
+    test_skip_continues_through_tr_prefixed_instruction();
+    test_tab_fires_one_opcode_after_next();
+    test_int1l_is_noop_but_flags_hit();
     if (failures == 0) { std::printf("PASS\n"); return 0; }
     std::printf("%d FAILURE(S)\n", failures);
     return 1;

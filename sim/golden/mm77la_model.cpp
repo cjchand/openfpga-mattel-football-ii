@@ -105,13 +105,18 @@ void Mm77laModel::increment_pc() {
     st_.pc = static_cast<uint16_t>((st_.pc & ~0x3fu) | (st_.pc >> 1 & 0x1f) | (feed << 5));
 }
 
+// static helper: is `op` a TR prefix byte (0x30-0x3F)?
+static bool op_is_tr(uint8_t op) { return (op & 0xF0) == 0x30; }
+
 void Mm77laModel::step() {
     // Apply any carry-delay flag pending from a PRIOR instruction BEFORE this
     // instruction's own switch runs, so that if THIS instruction is itself
     // AC/ACSK, its fresh st_.c/c_delay aren't read back here -- that would
     // silently discard the previous instruction's pending carry on
     // back-to-back AC/ACSK (see regression test
-    // test_back_to_back_ac_does_not_lose_first_pending_carry).
+    // test_back_to_back_ac_does_not_lose_first_pending_carry). This placement
+    // (top of step(), before the switch) is the Task 6 fix; do NOT move this
+    // to the bottom of the function.
     if (st_.c_delay) {
         st_.c_in = st_.c;
         st_.c_delay = false;
@@ -119,173 +124,172 @@ void Mm77laModel::step() {
 
     uint16_t ram_addr = st_.sag ? (0x30 | (st_.b & 0xF)) : st_.b;
     st_.sag = false; // exactly one cycle of effect
+
     uint8_t op = rom_read(st_.pc);
     increment_pc();
 
-    switch (op & 0xF0) {
-        case 0x40: { // LAI x, with coalescing suppression
-            bool suppressed = (st_.prev_op & 0xF0) == 0x40;
-            if (!suppressed) st_.a = op & 0xF;
-            break;
-        }
-        case 0x10: { // LB x
-            bool suppressed = (st_.prev_op & 0xF0) == 0x10;
-            if (!suppressed) st_.b = op & 0xF;
-            break;
-        }
-        case 0x60: { // AISK x (x!=0); I1SK (x==0) is Task 5/7 I/O work, left as no-op here
-            uint8_t x = op & 0xF;
-            if (x != 0) {
-                uint8_t sum = static_cast<uint8_t>(st_.a + x);
-                st_.a = sum & 0xF;
-                st_.skip = (x == 6) ? false : (sum < 0x10);
+    bool consumed_by_skip = st_.skip;
+    if (consumed_by_skip) {
+        st_.skip = false;
+        // If what we just "executed" as a skip target is itself a TR prefix,
+        // the skip must extend through the whole multi-byte instruction.
+        if (op_is_tr(op)) {
+            uint8_t op2 = rom_read(st_.pc);
+            increment_pc();
+            if (op_is_tr(op2)) {
+                increment_pc(); // consume the 3rd byte of a TLB/TMLB-under-skip too
             }
-            break;
         }
-        case 0x80: { // TM x
-            constexpr uint16_t prgmask = 0x7FF;
-            bool in_subroutine_page = (st_.pc & ~0x7Fu) == (prgmask & ~0x7Fu);
-            if (!in_subroutine_page) {
+        st_.prev3_op = st_.prev2_op;
+        st_.prev2_op = st_.prev_op;
+        st_.prev_op = op;
+        if (st_.tab_pending) { st_.skip_count = static_cast<uint8_t>(st_.a + 1); st_.a = 0xF; st_.tab_pending = false; }
+        return;
+    }
+
+    bool is_2byte = op_is_tr(st_.prev_op);
+    bool is_3byte = is_2byte && op_is_tr(st_.prev2_op);
+
+    if (is_3byte) {
+        switch (op & 0xF0) {
+            case 0x80: { // TMLB
                 st_.stack[1] = st_.stack[0];
                 st_.stack[0] = st_.pc;
+                st_.pc = static_cast<uint16_t>(0x400 | ((~st_.prev_op & 0xF) << 6) | (~op & 0x3F));
+                break;
             }
-            uint8_t x = op & 0x3F;
-            st_.pc = static_cast<uint16_t>((prgmask & ~0x3Fu) | (~x & 0x3Fu));
-            break;
+            case 0xC0: { // TLB
+                st_.pc = static_cast<uint16_t>(0x400 | ((~st_.prev_op & 0xF) << 6) | (~op & 0x3F));
+                break;
+            }
+            default: break;
         }
-        case 0xC0: { // T x
-            constexpr uint16_t prgmask = 0x7FF;
-            bool in_subroutine_page = (st_.pc & ~0x7Fu) == (prgmask & ~0x7Fu);
-            uint16_t pc = st_.pc;
-            if (in_subroutine_page) pc &= ~0x40u;
-            uint8_t x = op & 0x3F;
-            st_.pc = static_cast<uint16_t>((pc & ~0x3Fu) | (~x & 0x3Fu));
-            break;
+    } else if (is_2byte) {
+        switch (op & 0xF0) {
+            case 0x30: break; // another TR -- enables 3-byte dispatch next step
+            case 0x40: { // SKBEI x
+                st_.skip = ((st_.b & 0xF) == (op & 0xF));
+                break;
+            }
+            case 0x60: { // SKAEI x (op==0x60 exactly is illegal, treat as no-op)
+                if (op != 0x60) st_.skip = (st_.a == (~op & 0xF));
+                break;
+            }
+            case 0x80: { // TML
+                st_.stack[1] = st_.stack[0];
+                st_.stack[0] = st_.pc;
+                st_.pc = static_cast<uint16_t>(((~st_.prev_op & 0xF) << 6) | (~op & 0x3F));
+                break;
+            }
+            case 0xC0: { // TL
+                st_.pc = static_cast<uint16_t>(((~st_.prev_op & 0xF) << 6) | (~op & 0x3F));
+                break;
+            }
+            default: break;
         }
-        default: {
-            switch (op & 0xFC) {
-                case 0x08: { // EOB x (op & 0xFC == 0x08 covers 0x08-0x0B, x = op & 0x3)
-                    bool suppressed = (st_.prev_op & 0xFC) == 0x08;
-                    if (!suppressed) st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
-                    break;
+    } else {
+        switch (op & 0xF0) {
+            case 0x10: { bool suppressed = (st_.prev_op & 0xF0) == 0x10; if (!suppressed) st_.b = op & 0xF; break; } // LB x
+            case 0x30: break; // TR prefix, no direct effect
+            case 0x40: { bool suppressed = (st_.prev_op & 0xF0) == 0x40; if (!suppressed) st_.a = op & 0xF; break; } // LAI x
+            case 0x60: { // AISK x (x!=0); I1SK (x==0) is Task 5/7 I/O work, left as no-op here
+                uint8_t x = op & 0xF;
+                if (x != 0) {
+                    uint8_t sum = static_cast<uint8_t>(st_.a + x);
+                    st_.a = sum & 0xF;
+                    st_.skip = (x == 6) ? false : (sum < 0x10);
                 }
-                case 0x58: { // XDSK x
-                    uint8_t tmp = ram_read(static_cast<uint8_t>(ram_addr));
-                    ram_write(static_cast<uint8_t>(ram_addr), st_.a);
-                    st_.a = tmp;
-                    uint8_t bl = static_cast<uint8_t>(((st_.b & 0xF) - 1) & 0xF);
-                    st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | bl);
-                    st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
-                    st_.ram_delay = true;
-                    st_.skip = (bl == 0xF);
-                    break;
-                }
-                case 0x54: { // XNSK x
-                    uint8_t tmp = ram_read(static_cast<uint8_t>(ram_addr));
-                    ram_write(static_cast<uint8_t>(ram_addr), st_.a);
-                    st_.a = tmp;
-                    uint8_t bl = static_cast<uint8_t>(((st_.b & 0xF) + 1) & 0xF);
-                    st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | bl);
-                    st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
-                    st_.ram_delay = true;
-                    st_.skip = (bl == 0x0);
-                    break;
-                }
-                case 0x20: { // SB x
-                    uint8_t val = ram_read(static_cast<uint8_t>(ram_addr));
-                    ram_write(static_cast<uint8_t>(ram_addr), val | (1 << (op & 0x3)));
-                    break;
-                }
-                case 0x24: { // RB x
-                    uint8_t val = ram_read(static_cast<uint8_t>(ram_addr));
-                    ram_write(static_cast<uint8_t>(ram_addr), val & ~(1 << (op & 0x3)));
-                    break;
-                }
-                case 0x28: { // SKBF x
-                    uint8_t val = ram_read(static_cast<uint8_t>(ram_addr));
-                    st_.skip = (val & (1 << (op & 0x3))) == 0;
-                    break;
-                }
-                case 0x50: { // L x
-                    st_.a = ram_read(static_cast<uint8_t>(ram_addr));
-                    st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
-                    break;
-                }
-                case 0x5C: { // X x
-                    uint8_t tmp = ram_read(static_cast<uint8_t>(ram_addr));
-                    ram_write(static_cast<uint8_t>(ram_addr), st_.a);
-                    st_.a = tmp;
-                    st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
-                    break;
-                }
-                default: {
-                    switch (op) {
-                        case 0x00: break; // NOP
-                        case 0x07: { // SAG
-                            st_.sag = true;
-                            break;
-                        }
-                        case 0x02: { // SKNC
-                            st_.skip = (st_.c_in == 0);
-                            break;
-                        }
-                        case 0x2E: { // RTSK
-                            st_.pc = st_.stack[0] & 0x7FF;
-                            st_.stack[0] = st_.stack[1];
-                            st_.skip = true;
-                            break;
-                        }
-                        case 0x2F: { // RT
-                            st_.pc = st_.stack[0] & 0x7FF;
-                            st_.stack[0] = st_.stack[1];
-                            break;
-                        }
-                        case 0x76: { // LBA (MM78: no ram_delay)
-                            st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | st_.a);
-                            break;
-                        }
-                        case 0x77: { // COM
-                            st_.a = st_.a ^ 0xF;
-                            break;
-                        }
-                        case 0x7A: { // XAB
-                            uint8_t tmp = st_.a;
-                            st_.a = st_.b & 0xF;
-                            st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | tmp);
-                            st_.ram_delay = true;
-                            break;
-                        }
-                        case 0x7E: { // A
-                            st_.a = static_cast<uint8_t>((st_.a + ram_read(static_cast<uint8_t>(ram_addr))) & 0xF);
-                            break;
-                        }
-                        case 0x7C: { // AC
-                            uint8_t sum = static_cast<uint8_t>(st_.a + ram_read(static_cast<uint8_t>(ram_addr)) + st_.c_in);
-                            st_.c = (sum >> 4) & 1;
-                            st_.a = sum & 0xF;
-                            st_.c_delay = true;
-                            break;
-                        }
-                        case 0x7D: { // ACSK -- MM78: skip if NEW carry (inverted vs MM76)
-                            uint8_t sum = static_cast<uint8_t>(st_.a + ram_read(static_cast<uint8_t>(ram_addr)) + st_.c_in);
-                            st_.c = (sum >> 4) & 1;
-                            st_.a = sum & 0xF;
-                            st_.c_delay = true;
-                            st_.skip = st_.c != 0;
-                            break;
-                        }
-                        case 0x7F: { // SKMEA
-                            st_.skip = (st_.a == ram_read(static_cast<uint8_t>(ram_addr)));
-                            break;
-                        }
-                        default:
-                            break; // unimplemented opcodes fall through as NOP until later tasks
+                break;
+            }
+            case 0x80: { // TM x
+                constexpr uint16_t prgmask = 0x7FF;
+                bool in_subroutine_page = (st_.pc & ~0x7Fu) == (prgmask & ~0x7Fu);
+                if (!in_subroutine_page) { st_.stack[1] = st_.stack[0]; st_.stack[0] = st_.pc; }
+                uint8_t x = op & 0x3F;
+                st_.pc = static_cast<uint16_t>((prgmask & ~0x3Fu) | (~x & 0x3Fu));
+                break;
+            }
+            case 0xC0: { // T x
+                constexpr uint16_t prgmask = 0x7FF;
+                bool in_subroutine_page = (st_.pc & ~0x7Fu) == (prgmask & ~0x7Fu);
+                uint16_t pc = st_.pc;
+                if (in_subroutine_page) pc &= ~0x40u;
+                uint8_t x = op & 0x3F;
+                st_.pc = static_cast<uint16_t>((pc & ~0x3Fu) | (~x & 0x3Fu));
+                break;
+            }
+            default: {
+                switch (op & 0xFC) {
+                    case 0x08: { bool suppressed = (st_.prev_op & 0xFC) == 0x08; if (!suppressed) st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4)); break; } // EOB x
+                    case 0x20: { uint8_t val = ram_read(static_cast<uint8_t>(ram_addr)); ram_write(static_cast<uint8_t>(ram_addr), val | (1 << (op & 0x3))); break; } // SB x
+                    case 0x24: { uint8_t val = ram_read(static_cast<uint8_t>(ram_addr)); ram_write(static_cast<uint8_t>(ram_addr), val & ~(1 << (op & 0x3))); break; } // RB x
+                    case 0x28: { uint8_t val = ram_read(static_cast<uint8_t>(ram_addr)); st_.skip = (val & (1 << (op & 0x3))) == 0; break; } // SKBF x
+                    case 0x50: { st_.a = ram_read(static_cast<uint8_t>(ram_addr)); st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4)); break; } // L x
+                    case 0x54: { // XNSK x
+                        uint8_t tmp = ram_read(static_cast<uint8_t>(ram_addr));
+                        ram_write(static_cast<uint8_t>(ram_addr), st_.a);
+                        st_.a = tmp;
+                        uint8_t bl = static_cast<uint8_t>(((st_.b & 0xF) + 1) & 0xF);
+                        st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | bl);
+                        st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
+                        st_.ram_delay = true;
+                        st_.skip = (bl == 0x0);
+                        break;
                     }
-                    break;
+                    case 0x58: { // XDSK x
+                        uint8_t tmp = ram_read(static_cast<uint8_t>(ram_addr));
+                        ram_write(static_cast<uint8_t>(ram_addr), st_.a);
+                        st_.a = tmp;
+                        uint8_t bl = static_cast<uint8_t>(((st_.b & 0xF) - 1) & 0xF);
+                        st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | bl);
+                        st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
+                        st_.ram_delay = true;
+                        st_.skip = (bl == 0xF);
+                        break;
+                    }
+                    case 0x5C: { // X x
+                        uint8_t tmp = ram_read(static_cast<uint8_t>(ram_addr));
+                        ram_write(static_cast<uint8_t>(ram_addr), st_.a);
+                        st_.a = tmp;
+                        st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
+                        break;
+                    }
+                    default: {
+                        switch (op) {
+                            case 0x00: break; // NOP
+                            case 0x02: st_.skip = (st_.c_in == 0); break; // SKNC
+                            case 0x04: st_.int1l_hit = true; break; // INT1L -- flagged no-op
+                            case 0x07: st_.sag = true; break; // SAG
+                            case 0x2C: st_.tab_pending = true; break; // TAB -- delayed fire
+                            case 0x2E: { st_.pc = st_.stack[0] & 0x7FF; st_.stack[0] = st_.stack[1]; st_.skip = true; break; } // RTSK
+                            case 0x2F: { st_.pc = st_.stack[0] & 0x7FF; st_.stack[0] = st_.stack[1]; break; } // RT
+                            case 0x72: break; // IX -- stub, no PLA wiring this phase
+                            case 0x76: st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | st_.a); break; // LBA (MM78: no ram_delay)
+                            case 0x77: st_.a = st_.a ^ 0xF; break; // COM
+                            case 0x7A: { uint8_t tmp = st_.a; st_.a = st_.b & 0xF; st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | tmp); st_.ram_delay = true; break; } // XAB
+                            case 0x7C: { uint8_t sum = static_cast<uint8_t>(st_.a + ram_read(static_cast<uint8_t>(ram_addr)) + st_.c_in); st_.c = (sum >> 4) & 1; st_.a = sum & 0xF; st_.c_delay = true; break; } // AC
+                            case 0x7D: { uint8_t sum = static_cast<uint8_t>(st_.a + ram_read(static_cast<uint8_t>(ram_addr)) + st_.c_in); st_.c = (sum >> 4) & 1; st_.a = sum & 0xF; st_.c_delay = true; st_.skip = st_.c != 0; break; } // ACSK -- MM78: skip if NEW carry (inverted vs MM76)
+                            case 0x7E: st_.a = static_cast<uint8_t>((st_.a + ram_read(static_cast<uint8_t>(ram_addr))) & 0xF); break; // A
+                            case 0x7F: st_.skip = (st_.a == ram_read(static_cast<uint8_t>(ram_addr))); break; // SKMEA
+                            default: break; // unimplemented opcodes fall through as NOP until later tasks
+                        }
+                        break;
+                    }
                 }
+                break;
             }
-            break;
         }
+    }
+
+    if (st_.tab_pending && op != 0x2C) {
+        // TAB's effect fires after the FOLLOWING opcode has executed; since
+        // we're already past that opcode's execution here, apply it now,
+        // using the A value present after the intervening opcode ran (per
+        // docs/initial-plan.md §5.1's op_tab() semantics, which reads m_a at
+        // fire time).
+        st_.skip_count = static_cast<uint8_t>(st_.a + 1);
+        st_.a = 0xF;
+        st_.tab_pending = false;
     }
 
     st_.prev3_op = st_.prev2_op;
