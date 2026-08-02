@@ -1,5 +1,6 @@
 // sim/pps41_core_tb.cpp
 #include "Vpps41_core.h"
+#include "Vpps41_core___024root.h" // Important #10: needed for dut->rootp->pps41_core__DOT__ram[] access
 #include "verilated.h"
 #include "golden/mm77la_model.h"
 #include <cstdio>
@@ -9,6 +10,20 @@
 static void tick(Vpps41_core* dut) {
     dut->clk = 0; dut->eval();
     dut->clk = 1; dut->eval();
+}
+
+// Maps the 7-bit RAM address space onto the 96 physically-real nibbles.
+// Mirrors sim/golden/mm77la_model.cpp's ram_phys_index() / src/pps41_core.v's
+// ram_phys_index() exactly (Important #10). Used here only to index into the
+// RTL's raw internal `ram` array (accessed via Verilator's rootp escape
+// hatch below), which is stored by physical index, not raw address.
+static uint8_t ram_phys_index(uint8_t addr) {
+    addr &= 0x7F;
+    if (addr < 0x40) return addr;
+    if (addr <= 0x4F || (addr >= 0x58 && addr <= 0x5F)) return 64 + (addr & 0x07);
+    if (addr <= 0x57) return 72 + (addr & 0x07);
+    if (addr <= 0x6F || (addr >= 0x78 && addr <= 0x7F)) return 80 + (addr & 0x07);
+    return 88 + (addr & 0x07);
 }
 
 int main(int argc, char** argv) {
@@ -52,7 +67,7 @@ int main(int argc, char** argv) {
         golden.step();
         const auto& g = golden.state();
 
-        if (g.prev_op == 0x72) ix_hit_count++;
+        if (g.ix_executed) ix_hit_count++; // Important #11: precise per-step flag, not post-hoc prev_op==0x72 inspection
         if (g.int1l_hit) int1l_ever_hit = true;
 
         bool mismatch = false;
@@ -65,6 +80,26 @@ int main(int argc, char** argv) {
         if (dut->stack1_out != g.stack[1]) { std::printf("cycle %ld: stack1 mismatch rtl=%03x golden=%03x\n", i, dut->stack1_out, g.stack[1]); mismatch = true; }
         if (dut->skip_count_out != g.skip_count) { std::printf("cycle %ld: skip_count mismatch rtl=%x golden=%x\n", i, dut->skip_count_out, g.skip_count); mismatch = true; }
         if (dut->int1l_hit_out != (g.int1l_hit ? 1 : 0)) { std::printf("cycle %ld: int1l_hit mismatch rtl=%d golden=%d\n", i, dut->int1l_hit_out, g.int1l_hit); mismatch = true; }
+
+        // Important #10: full 96-nibble RAM content comparison every cycle,
+        // not just the 9 scalar architectural fields above. Reads the RTL's
+        // raw internal `ram` array (physical-index-addressed) via
+        // Verilator's rootp escape hatch, and the golden model's RAM via its
+        // existing debug_ram_read() accessor (which applies the identical
+        // address-to-physical-index mapping internally). Sweeping all 128
+        // raw 7-bit addresses (not just the 96 physically distinct ones)
+        // also exercises that both models' mirror-aliasing agrees.
+        for (int addr = 0; addr < 0x80 && !mismatch; addr++) {
+            uint8_t idx = ram_phys_index(static_cast<uint8_t>(addr));
+            uint8_t rtl_val = dut->rootp->pps41_core__DOT__ram[idx] & 0xF;
+            uint8_t golden_val = golden.debug_ram_read(static_cast<uint8_t>(addr)) & 0xF;
+            if (rtl_val != golden_val) {
+                std::printf("cycle %ld: ram[addr=%02x,phys=%d] mismatch rtl=%x golden=%x\n",
+                            i, addr, idx, rtl_val, golden_val);
+                mismatch = true;
+            }
+        }
+
         if (mismatch) { delete dut; return 1; }
     }
 
