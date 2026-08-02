@@ -1,4 +1,4 @@
 development-assets/
 .DS_Store
 sim/roms/
-sim/*/obj_dir*/
+sim/obj_dir*/
