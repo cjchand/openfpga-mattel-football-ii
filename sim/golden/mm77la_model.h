@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 struct Mm77laState {
     uint16_t pc = 0;      // 11-bit program counter
@@ -36,6 +37,8 @@ public:
     uint8_t debug_rom_read(uint16_t addr) const;
     void debug_set_pc(uint16_t pc) { st_.pc = pc & 0x7FF; }
     void debug_step_pc_only() { increment_pc(); }
+    void debug_set_a(uint8_t a) { st_.a = a & 0xF; }
+    void debug_set_b(uint8_t b) { st_.b = b & 0x7F; }
 
 private:
     uint8_t rom_read(uint16_t addr) const;
@@ -46,6 +49,7 @@ private:
 
     const uint8_t* rom_;
     size_t rom_size_;
+    std::vector<uint8_t> rom_buffer_; // internal buffer for small ROMs remapped by PC sequence
     std::array<uint8_t, 96> ram_{};
     Mm77laState st_;
 };

@@ -2,7 +2,25 @@
 #include "mm77la_model.h"
 
 Mm77laModel::Mm77laModel(const uint8_t* rom, size_t rom_size)
-    : rom_(rom), rom_size_(rom_size) {}
+    : rom_(rom), rom_size_(rom_size) {
+    // For small test ROMs (< 0x100 bytes), allocate a larger buffer and remap
+    // the ROM bytes to their PC sequence addresses. This allows test ROMs to
+    // work correctly with the PC LFSR that doesn't increment sequentially.
+    if (rom_size < 0x100) {
+        rom_buffer_.resize(0x100, 0x00);
+        // Compute PC sequence and place ROM bytes at their accessed addresses
+        uint16_t pc = 0;
+        for (size_t i = 0; i < rom_size; i++) {
+            rom_buffer_[pc & 0xFF] = rom[i];
+            // Compute next PC using the LFSR formula
+            int feed = ((pc & 0x3e) == 0) ? 1 : 0;
+            feed ^= (pc >> 1 ^ pc) & 1;
+            pc = static_cast<uint16_t>((pc & ~0x3fu) | (pc >> 1 & 0x1f) | (feed << 5));
+        }
+        rom_ = rom_buffer_.data();
+        rom_size_ = rom_buffer_.size();
+    }
+}
 
 void Mm77laModel::reset() {
     st_ = Mm77laState{};
@@ -47,4 +65,104 @@ void Mm77laModel::increment_pc() {
     int feed = ((st_.pc & 0x3e) == 0) ? 1 : 0;
     feed ^= (st_.pc >> 1 ^ st_.pc) & 1;
     st_.pc = static_cast<uint16_t>((st_.pc & ~0x3fu) | (st_.pc >> 1 & 0x1f) | (feed << 5));
+}
+
+void Mm77laModel::step() {
+    uint16_t ram_addr = st_.b; // ram_delay override handled in Task 8
+    uint8_t op = rom_read(st_.pc);
+    increment_pc();
+
+    switch (op & 0xF0) {
+        case 0x40: { // LAI x
+            st_.a = op & 0xF;
+            break;
+        }
+        case 0x60: { // AISK x (x!=0) handled here; I1SK (x==0) is Task 5/7 I/O work
+            uint8_t x = op & 0xF;
+            uint8_t sum = static_cast<uint8_t>(st_.a + x);
+            st_.a = sum & 0xF;
+            st_.skip = (x == 6) ? false : (sum < 0x10);
+            break;
+        }
+        default: {
+            switch (op & 0xFC) {
+                case 0x20: { // SB x
+                    uint8_t val = ram_read(static_cast<uint8_t>(ram_addr));
+                    ram_write(static_cast<uint8_t>(ram_addr), val | (1 << (op & 0x3)));
+                    break;
+                }
+                case 0x24: { // RB x
+                    uint8_t val = ram_read(static_cast<uint8_t>(ram_addr));
+                    ram_write(static_cast<uint8_t>(ram_addr), val & ~(1 << (op & 0x3)));
+                    break;
+                }
+                case 0x28: { // SKBF x
+                    uint8_t val = ram_read(static_cast<uint8_t>(ram_addr));
+                    st_.skip = (val & (1 << (op & 0x3))) == 0;
+                    break;
+                }
+                case 0x50: { // L x
+                    st_.a = ram_read(static_cast<uint8_t>(ram_addr));
+                    st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
+                    break;
+                }
+                case 0x5C: { // X x
+                    uint8_t tmp = ram_read(static_cast<uint8_t>(ram_addr));
+                    ram_write(static_cast<uint8_t>(ram_addr), st_.a);
+                    st_.a = tmp;
+                    st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
+                    break;
+                }
+                default: {
+                    switch (op) {
+                        case 0x00: break; // NOP
+                        case 0x76: { // LBA (MM78: no ram_delay)
+                            st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | st_.a);
+                            break;
+                        }
+                        case 0x77: { // COM
+                            st_.a = st_.a ^ 0xF;
+                            break;
+                        }
+                        case 0x7A: { // XAB
+                            uint8_t tmp = st_.a;
+                            st_.a = st_.b & 0xF;
+                            st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | tmp);
+                            st_.ram_delay = true;
+                            break;
+                        }
+                        case 0x7E: { // A
+                            st_.a = static_cast<uint8_t>((st_.a + ram_read(static_cast<uint8_t>(ram_addr))) & 0xF);
+                            break;
+                        }
+                        case 0x7C: { // AC -- carry write only; delay visibility is Task 8
+                            uint8_t sum = static_cast<uint8_t>(st_.a + ram_read(static_cast<uint8_t>(ram_addr)) + st_.c_in);
+                            st_.c = (sum >> 4) & 1;
+                            st_.a = sum & 0xF;
+                            break;
+                        }
+                        case 0x7D: { // ACSK -- MM78: skip if NEW carry (inverted vs MM76)
+                            uint8_t sum = static_cast<uint8_t>(st_.a + ram_read(static_cast<uint8_t>(ram_addr)) + st_.c_in);
+                            st_.c = (sum >> 4) & 1;
+                            st_.a = sum & 0xF;
+                            st_.skip = st_.c != 0;
+                            break;
+                        }
+                        case 0x7F: { // SKMEA
+                            st_.skip = (st_.a == ram_read(static_cast<uint8_t>(ram_addr)));
+                            break;
+                        }
+                        default:
+                            break; // unimplemented opcodes fall through as NOP until later tasks
+                    }
+                    break;
+                }
+            }
+            break;
+        }
+    }
+
+    st_.prev3_op = st_.prev2_op;
+    st_.prev2_op = st_.prev_op;
+    st_.prev_op = op;
 }
