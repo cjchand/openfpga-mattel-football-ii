@@ -3,7 +3,9 @@ module pps41_core (
     input  wire        clk,
     input  wire        rst_n,
     output wire [10:0] rom_addr,
+    /* verilator lint_off UNUSEDSIGNAL */
     input  wire [7:0]  rom_data
+    /* verilator lint_on UNUSEDSIGNAL */
 );
     reg [10:0] pc;
 
