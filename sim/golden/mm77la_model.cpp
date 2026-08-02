@@ -106,12 +106,16 @@ void Mm77laModel::increment_pc() {
 }
 
 void Mm77laModel::step() {
-    // Capture and consume any carry-delay flag pending from a PRIOR
-    // instruction before this instruction's own switch (which may set
-    // c_delay again, e.g. for AC/ACSK) runs -- otherwise the flag would be
-    // applied within the same step() call that set it, one cycle too early.
-    bool apply_c_delay = st_.c_delay;
-    st_.c_delay = false;
+    // Apply any carry-delay flag pending from a PRIOR instruction BEFORE this
+    // instruction's own switch runs, so that if THIS instruction is itself
+    // AC/ACSK, its fresh st_.c/c_delay aren't read back here -- that would
+    // silently discard the previous instruction's pending carry on
+    // back-to-back AC/ACSK (see regression test
+    // test_back_to_back_ac_does_not_lose_first_pending_carry).
+    if (st_.c_delay) {
+        st_.c_in = st_.c;
+        st_.c_delay = false;
+    }
 
     uint16_t ram_addr = st_.sag ? (0x30 | (st_.b & 0xF)) : st_.b;
     st_.sag = false; // exactly one cycle of effect
@@ -282,10 +286,6 @@ void Mm77laModel::step() {
             }
             break;
         }
-    }
-
-    if (apply_c_delay) {
-        st_.c_in = st_.c;
     }
 
     st_.prev3_op = st_.prev2_op;

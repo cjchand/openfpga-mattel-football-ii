@@ -297,6 +297,31 @@ static void test_ac_carry_visible_to_sknc_only_after_one_instruction_delay() {
     CHECK(m.state().skip == false); // c_in should now be 1 -> SKNC (skip if carry==0) does NOT skip
 }
 
+static void test_back_to_back_ac_does_not_lose_first_pending_carry() {
+    // AC; AC; NOP; SKNC. The first AC produces carry1=1 (0xF+0x2 overflows).
+    // Because c_in updates at the START of the instruction AFTER the AC that
+    // set it (not the end of that AC's own step()), the second AC's own
+    // addition already sees c_in==carry1, and c_in visibly becomes carry1
+    // immediately after the second AC's step() call -- carry1 must not be
+    // silently overwritten/lost when the second AC sets its own (different)
+    // pending carry.
+    uint8_t rom[4] = {0x7C, 0x7C, 0x00, 0x02}; // AC; AC; NOP; SKNC
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0xF);
+    m.debug_set_b(0x00);
+    m.debug_ram_write(0x00, 0x2); // 0xF + 0x2 + c_in(0) = 0x11 -> carry1 = 1, A becomes 0x1
+    m.step(); // AC #1: c_in still 0 (not yet visible)
+    CHECK(m.state().c_in == 0);
+    m.step(); // AC #2: at its top, c_in becomes carry1 (1); its own add uses
+              // A=0x1 + RAM[0]=0x2 + c_in=1 = 0x4 -> carry2 = 0 (no overflow)
+    CHECK(m.state().c_in == 1); // carry1 visible now, not lost
+    CHECK(m.state().a == 0x4);
+    m.step(); // NOP: at its top, c_in becomes carry2 (0)
+    m.step(); // SKNC reads c_in == 0 -> skip == true
+    CHECK(m.state().skip == true);
+}
+
 static void test_xdsk_sets_ram_delay_and_skips_on_wrap_to_f() {
     uint8_t rom[1] = {static_cast<uint8_t>(0x58 | 0x1)}; // XDSK 1
     Mm77laModel m(rom, sizeof(rom));
@@ -348,6 +373,7 @@ int main() {
     test_successive_lai_coalescing_suppresses_repeat();
     test_lai_after_non_lai_is_not_suppressed();
     test_ac_carry_visible_to_sknc_only_after_one_instruction_delay();
+    test_back_to_back_ac_does_not_lose_first_pending_carry();
     test_xdsk_sets_ram_delay_and_skips_on_wrap_to_f();
     test_sag_forces_ram_addr_upper_bits_to_3_for_one_cycle_only();
     if (failures == 0) { std::printf("PASS\n"); return 0; }
