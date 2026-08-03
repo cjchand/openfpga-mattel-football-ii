@@ -4,7 +4,7 @@ CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
 .PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test display-vectors-long-test test clean
-.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test display-render-test screenshot startup-state-test
+.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test display-render-test field-rom-test label-rom-test screenshot startup-state-test
 
 lint-core:
 	$(VERILATOR) --lint-only -Wall --Wno-UNUSEDSIGNAL -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v
@@ -83,6 +83,18 @@ display-render-test:
 		--Mdir obj_dir_display_render -Wall --Wno-UNUSEDSIGNAL --Wno-WIDTH
 	$(MAKE) -C obj_dir_display_render -f Vdisplay_render.mk
 	./obj_dir_display_render/Vdisplay_render
+
+field-rom-test:
+	$(VERILATOR) --cc ../src/field_rom.v --exe field_rom_tb.cpp \
+		--Mdir obj_dir_field_rom -Wall --Wno-UNUSEDSIGNAL --Wno-WIDTH
+	$(MAKE) -C obj_dir_field_rom -f Vfield_rom.mk
+	cd ../src && ../sim/obj_dir_field_rom/Vfield_rom
+
+label-rom-test:
+	$(VERILATOR) --cc ../src/label_rom.v --exe label_rom_tb.cpp \
+		--Mdir obj_dir_label_rom -Wall --Wno-UNUSEDSIGNAL --Wno-WIDTH
+	$(MAKE) -C obj_dir_label_rom -f Vlabel_rom.mk
+	cd ../src && ../sim/obj_dir_label_rom/Vlabel_rom
 
 # Debugging/verification aid, not part of `test` -- see screenshot_tb.cpp.
 # Usage: make screenshot ROM=path/to.bin CYCLES=20000 OUT=/tmp/frame.ppm [STIM=stimulus/foo.txt]
@@ -203,7 +215,7 @@ display-vectors-long-test: core-test
 	done; \
 	echo "display-vectors-long-test: all display vectors PASS at 3200 cycles"
 
-test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test display-vectors-long-test display-render-test
+test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test display-vectors-long-test display-render-test field-rom-test label-rom-test
 
 clean:
 	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test /tmp/mm77la_display_mux_test /tmp/mm77la_display_mux_rtl_test /tmp/mm77la_display_pwm_test
