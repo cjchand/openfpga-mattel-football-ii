@@ -2,4 +2,4 @@ development-assets/
 .DS_Store
 sim/roms/
 sim/obj_dir*/
-dist/Assets/
+dist/assets/
