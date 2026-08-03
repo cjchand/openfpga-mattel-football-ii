@@ -752,6 +752,7 @@ set_global_assignment -name VERILOG_FILE ../ce_gen.v
 set_global_assignment -name VERILOG_FILE ../rom_loader.v
 set_global_assignment -name VERILOG_FILE ../audio_gen.v
 set_global_assignment -name VERILOG_FILE ../display_render.v
+set_global_assignment -name SEARCH_PATH ../
 set_global_assignment -name SDC_FILE core/core_constraints.sdc
 set_global_assignment -name SIGNALTAP_FILE core/stp1.stp
 set_global_assignment -name QIP_FILE core/mf_pllbase.qip
