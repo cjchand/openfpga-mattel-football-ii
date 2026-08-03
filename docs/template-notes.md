@@ -78,3 +78,25 @@ Pocket's Cyclone V.
 an `apf/` framework directory, and a `core/` directory — matching the
 brief's expected layout exactly. No deviation requiring a stop-and-record
 detour was needed.
+
+## Hardware boot test findings (2026-08-03)
+
+- **Bitstream tested:** `dist/Cores/Developer.Core Template/bitstream.rbf_r`
+  (786,964 bytes, reversed RBF produced by `make package` in Task 3, sourced
+  from `src/fpga/output_files/ap_core.rbf` compiled in Task 2).
+- **Hardware:** Analogue Pocket running firmware 2.5.
+- **Test procedure:** The packaged bitstream was placed on SD card at the
+  correct folder path (`/Cores/Developer.Core Template/bitstream.rbf_r`,
+  matching the `Developer.Core Template` folder name from `core.json`) and
+  booted on real Analogue Pocket hardware.
+- **Result:** Clean boot, no error dialog or "Load error" message. Screen
+  displayed a solid gray fill (RGB 60,60,60) as expected for the placeholder
+  template core.
+- **Expected behavior confirmed:** The gray output is correct and expected.
+  The template's placeholder core hardcodes a constant gray output during
+  active video: `src/fpga/core/core_top.v` lines 594–596 set
+  `vidout_rgb[23:16] <= 8'd60; vidout_rgb[15:8] <= 8'd60; vidout_rgb[7:0] <= 8'd60;`
+  for the entire active video region. This is the stock placeholder behavior,
+  not a malfunction. The successful boot confirms end-to-end toolchain
+  viability: Docker Quartus compilation, RBF-to-RBF_R reversal, correct
+  SD-card folder naming, and Pocket hardware loading all functional.
