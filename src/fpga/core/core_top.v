@@ -494,6 +494,115 @@ core_bridge_cmd icb (
 
 ////////////////////////////////////////////////////////////////////////////////////////
 
+//
+// Football II CPU / display / audio core
+//
+    wire        core_ce;
+    ce_gen u_ce_gen (
+        .clk   ( clk_74a ),
+        .rst_n ( reset_n ),
+        .ce    ( core_ce )
+    );
+
+    wire [10:0] rom_addr_w;
+    wire [7:0]  rom_data_w;
+    rom_loader u_rom_loader (
+        .clk            ( clk_74a ),
+        .bridge_wr      ( bridge_wr ),
+        .bridge_addr    ( bridge_addr ),
+        .bridge_wr_data ( bridge_wr_data ),
+        .rom_addr       ( rom_addr_w ),
+        .rom_data       ( rom_data_w )
+    );
+
+    // p_input bit mapping, per docs/initial-plan.md §7's IN.0 table and the
+    // template's own cont1_key bit comment (this file, ~line 187-202).
+    wire [7:0] p_input_w = {
+        cont1_key[2],  // bit7: Left     = dpad_left
+        cont1_key[1],  // bit6: Down     = dpad_down
+        cont1_key[5],  // bit5: Pass     = face_b
+        cont1_key[4],  // bit4: Kick     = face_a
+        cont1_key[3],  // bit3: Right    = dpad_right
+        cont1_key[0],  // bit2: Up       = dpad_up
+        cont1_key[14], // bit1: Status   = face_select
+        cont1_key[15]  // bit0: Score    = face_start
+    };
+
+    wire [9:0]  r_output_w;
+    wire [11:0] d_output_w;
+    wire [1:0]  spk_level_w;
+    pps41_core u_pps41_core (
+        .clk               ( clk_74a ),
+        .rst_n             ( reset_n ),
+        .ce                ( core_ce ),
+        .rom_addr          ( rom_addr_w ),
+        .pc                (  ),
+        .rom_data          ( rom_data_w ),
+        .p_input           ( p_input_w ),
+        .dbg_b_set         ( 1'b0 ),
+        .dbg_b_val         ( 7'h0 ),
+        .dbg_sag_set       ( 1'b0 ),
+        .dbg_ram_wr        ( 1'b0 ),
+        .dbg_ram_wdata     ( 4'h0 ),
+        .ram_addr          (  ),
+        .ram_rdata         (  ),
+        .a_out             (  ),
+        .b_out             (  ),
+        .skip_out          (  ),
+        .c_out             (  ),
+        .stack0_out        (  ),
+        .stack1_out        (  ),
+        .skip_count_out    (  ),
+        .int1l_hit_out     (  ),
+        .r_output_out      ( r_output_w ),
+        .d_output_out      ( d_output_w ),
+        .tone_on_result    (  ),
+        .tone_freq_result  (  ),
+        .spk_output_result ( spk_level_w ),
+        .ios_state_result  (  ),
+        .skisl_skip_out    (  ),
+        .unimpl_hit_out    (  ),
+        .x_out             (  ),
+        .s_out             (  )
+    );
+
+    wire [9:0]   rowsel_w;
+    wire [10:0]  rowdata_w;
+    pps41_display_mux u_display_mux (
+        .d       ( d_output_w ),
+        .r       ( r_output_w ),
+        .rowsel  ( rowsel_w ),
+        .rowdata ( rowdata_w )
+    );
+
+    wire [219:0] levels_w;
+    pps41_display_pwm u_display_pwm (
+        .clk         ( clk_74a ),
+        .rst_n       ( reset_n ),
+        .ce          ( core_ce ),
+        .rowsel      ( rowsel_w ),
+        .rowdata     ( rowdata_w ),
+        .levels      ( levels_w ),
+        .window_tick (  )
+    );
+
+    wire [23:0] render_rgb_w;
+    display_render u_display_render (
+        .levels ( levels_w ),
+        .x      ( visible_x ),
+        .y      ( visible_y ),
+        .rgb    ( render_rgb_w )
+    );
+
+    audio_gen u_audio_gen (
+        .clk_74a    ( clk_74a ),
+        .level      ( spk_level_w ),
+        .audio_mclk ( audio_mclk ),
+        .audio_sclk (  ),
+        .audio_lrck ( audio_lrck ),
+        .audio_dac  ( audio_dac )
+    );
+
 
 
 // video generation
@@ -591,9 +700,7 @@ always @(posedge clk_core_12288 or negedge reset_n) begin
                 // data enable. this is the active region of the line
                 vidout_de <= 1;
                 
-                vidout_rgb[23:16] <= 8'd60;
-                vidout_rgb[15:8]  <= 8'd60;
-                vidout_rgb[7:0]   <= 8'd60;
+                vidout_rgb <= render_rgb_w;
                 
             end 
         end
@@ -603,51 +710,8 @@ end
 
 
 
-//
-// audio i2s silence generator
-// see other examples for actual audio generation
-//
-
-assign audio_mclk = audgen_mclk;
-assign audio_dac = audgen_dac;
-assign audio_lrck = audgen_lrck;
-
-// generate MCLK = 12.288mhz with fractional accumulator
-    reg         [21:0]  audgen_accum;
-    reg                 audgen_mclk;
-    parameter   [20:0]  CYCLE_48KHZ = 21'd122880 * 2;
-always @(posedge clk_74a) begin
-    audgen_accum <= audgen_accum + CYCLE_48KHZ;
-    if(audgen_accum >= 21'd742500) begin
-        audgen_mclk <= ~audgen_mclk;
-        audgen_accum <= audgen_accum - 21'd742500 + CYCLE_48KHZ;
-    end
-end
-
-// generate SCLK = 3.072mhz by dividing MCLK by 4
-    reg [1:0]   aud_mclk_divider;
-    wire        audgen_sclk = aud_mclk_divider[1] /* synthesis keep*/;
-    reg         audgen_lrck_1;
-always @(posedge audgen_mclk) begin
-    aud_mclk_divider <= aud_mclk_divider + 1'b1;
-end
-
-// shift out audio data as I2S 
-// 32 total bits per channel, but only 16 active bits at the start and then 16 dummy bits
-//
-    reg     [4:0]   audgen_lrck_cnt;    
-    reg             audgen_lrck;
-    reg             audgen_dac;
-always @(negedge audgen_sclk) begin
-    audgen_dac <= 1'b0;
-    // 48khz * 64
-    audgen_lrck_cnt <= audgen_lrck_cnt + 1'b1;
-    if(audgen_lrck_cnt == 31) begin
-        // switch channels
-        audgen_lrck <= ~audgen_lrck;
-        
-    end 
-end
+// audio_mclk/audio_dac/audio_lrck are now driven directly by u_audio_gen
+// (see near the top of the core-logic section, next to u_pps41_core).
 
 
 ///////////////////////////////////////////////
