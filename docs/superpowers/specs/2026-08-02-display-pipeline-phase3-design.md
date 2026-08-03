@@ -218,6 +218,46 @@ across real gameplay-derived I/O, not just synthetic vectors.
   §2 are confirmed against real-ROM `D`/`R` activity, not left as
   spec-derived-only claims.
 
+**Real-ROM run results (Task 7, `./sim/obj_dir_core/Vpps41_core
+development-assets/b8000-12 200000`, no button-press stimulus, `p_input`
+held at 0 throughout):** `PASS: 200000 cycles, no mismatches` — the extended
+lockstep harness (per-cell accumulator diffed every cycle, settled snapshot
+diffed every window boundary) is zero-mismatch against the real ROM.
+
+Temporary instrumentation (added and removed within this task; not part of
+the committed harness) recorded, additionally:
+
+- **None of the 110 display cells ever reached level 1 or 2** during these
+  200,000 cycles. `rowsel` (`D[9:0]`) was non-zero on 199,793 of 200,000
+  cycles (rows are almost always selected), but `rowdata` was non-zero on
+  only 204 of 200,000 cycles — `R` (which supplies `rowdata[6:0]` and, via
+  `R[9:7]`, `rowdata[10:8]`) was non-zero on only 204 cycles total, and
+  `D[11]` (the sole source of `rowdata[7]`, the row-1 DP bit) was never set
+  even once. With `WINDOW=1583` and `DIM_MIN=24`, 204 on-cycles spread
+  across ~126 windows (≈1.6 on-cycles/window on average, concentrated
+  wherever they happen to land) never comes close to lighting any single
+  cell to even the dim threshold. **This means the §2 digit/LED row-grouping
+  table could not be confirmed or contradicted by this specific run** — the
+  run simply never drives enough real column data to light anything,
+  regardless of which rows/columns the table predicts. This is consistent
+  with, and further corroborates, the open risk below (Phase 1's idle-loop
+  finding, carried into this spec's last open-risk bullet): with no button
+  press, the ROM appears to spend this entire 200,000-cycle window in a
+  loop that strobes `D` (selecting rows) without writing meaningful `R`
+  content, i.e. genuinely idling rather than rendering a static screen.
+  Confirming the row-grouping table against real column data requires a run
+  with button-press stimulus (or simply more cycles) to reach code paths
+  that actually populate `R` — out of scope for this task, which is
+  constrained to the specific 200,000-cycle, no-stimulus command above.
+- **`rowsel` was never observed multi-bit.** Across all 199,793 cycles where
+  `rowsel` was non-zero, exactly one bit was set each time (checked via
+  `rowsel & (rowsel - 1) == 0` every cycle) — this **refutes** the
+  "genuinely multi-bit in practice" possibility for this real-ROM run: real
+  gameplay-derived (well, idle-loop-derived) I/O strobes rows one at a time,
+  never several simultaneously, even though §2's `rowsel = D[9:0]` bitmask
+  formula permits the general multi-bit case in principle. This settles the
+  open-risk bullet below — no longer an open question for this data set.
+
 ## Open risks carried over from Phases 1-2 and initial-plan.md §9
 
 - No confirmed Rockwell datasheet for MM77LA/B8000 exists; MAME's C++ model
@@ -230,11 +270,27 @@ across real gameplay-derived I/O, not just synthetic vectors.
   or MAME itself — same standing risk category as Phases 1-2's three
   previously-found shared-derivation bugs (most recently Phase 2's `EOB`
   dispatch gap). Read §5's vectors with that limitation in mind.
-- Whether `rowsel` is ever genuinely multi-bit in the real ROM (vs. always
+- ~~Whether `rowsel` is ever genuinely multi-bit in the real ROM (vs. always
   effectively one-hot in practice) is confirmed or refuted empirically via
-  §5's real-ROM run, not assumed either way going in.
+  §5's real-ROM run, not assumed either way going in.~~ **Refuted by Task
+  7's real-ROM run:** `rowsel` was observed non-zero on 199,793/200,000
+  cycles and was single-bit every single time — never multi-bit — over the
+  full 200,000-cycle no-stimulus run. See §6 for the detailed figures.
 - Phase 1's idle-loop investigation (refuted in Phase 2 — the loop the ROM
   currently settles into doesn't poll the P port) remains unexplained.
   Worth revisiting once this phase's reconstructed display state is
   available — cross-referencing what the loop is plausibly rendering during
-  that time may shed light on what it's actually waiting for.
+  that time may shed light on what it's actually waiting for. **Task 7
+  update:** the reconstructed display state is now available, and it
+  corroborates rather than explains the idle-loop finding — during the full
+  200,000-cycle no-stimulus run, `R` (column data) is non-zero on only 204
+  cycles total and no display cell ever reaches even the dim threshold,
+  consistent with the CPU spending this entire window in a loop that
+  strobes rows without rendering real content. What that loop is *waiting
+  for* (button press being the obvious candidate, given `p_input` is held
+  at 0 throughout this run) is still not directly proven — would need a
+  run with button-press stimulus to confirm the loop exits and starts
+  driving real column data once input arrives. Left open for a future
+  task/phase, since driving synthetic button-press stimulus through the
+  lockstep harness is outside Task 7's scope (which is pinned to the
+  specific no-stimulus 200,000-cycle command).
