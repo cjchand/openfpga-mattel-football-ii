@@ -39,6 +39,11 @@ Mm77laModel::Mm77laModel(const uint8_t* rom, size_t rom_size)
 
 void Mm77laModel::reset() {
     st_ = Mm77laState{};
+    // Reset PC per MAME's pps41_base_device::device_reset():
+    // m_pc = m_prgmask >> 1 & ~0x3f. For this chip's 11-bit program
+    // space (prgmask=0x7FF), that's 0x3C0, not 0 -- confirmed against
+    // a real MAME mfootb2 trace.
+    st_.pc = 0x3C0;
     ram_.fill(0xF);
     tone_reset(st_.tone);
     io_reset(st_.io);

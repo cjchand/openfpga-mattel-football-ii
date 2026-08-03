@@ -567,7 +567,13 @@ module pps41_core (
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            pc_reg          <= 11'h0;
+            // Reset PC per MAME's pps41_base_device::device_reset():
+            // m_pc = m_prgmask >> 1 & ~0x3f. For this chip's 11-bit
+            // program space (prgmask=0x7FF), that's 0x3C0, not 0 --
+            // confirmed against a real MAME mfootb2 trace (first
+            // retiring instruction lands at 0x3E0, one LFSR step past
+            // the 0x3C0 reset vector).
+            pc_reg          <= 11'h3C0;
             b_reg       <= 7'h0;
             sag         <= 1'b0;
             ram_addr_reg <= 7'h0;

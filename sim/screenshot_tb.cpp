@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <map>
+#include <set>
 #include <vector>
 
 static void tick(Vpps41_core* dut) {
@@ -68,6 +69,9 @@ int main(int argc, char** argv) {
     dpwm->clk = 1; dpwm->eval();  // clock the reset in, don't rely on zero-init
     dpwm->rst_n = 1;
 
+    std::set<int> visited_pc;
+    bool unimpl_ever = false;
+    std::set<uint32_t> r_values, d_values;
     for (long i = 0; i < cycles; i++) {
         auto it = stimulus.find(i);
         if (it != stimulus.end()) current_p = it->second;
@@ -79,6 +83,11 @@ int main(int argc, char** argv) {
         dut->rom_data = (addr < rom.size()) ? rom[addr] : 0;
         tick(dut);
 
+        visited_pc.insert(dut->pc);
+        if (dut->unimpl_hit_out) unimpl_ever = true;
+        r_values.insert(dut->r_output_out);
+        d_values.insert(dut->d_output_out);
+
         dmux->d = dut->d_output_out;
         dmux->r = dut->r_output_out;
         dmux->eval();
@@ -87,6 +96,8 @@ int main(int argc, char** argv) {
         dpwm->clk = 0; dpwm->eval();
         dpwm->clk = 1; dpwm->eval();
     }
+    std::fprintf(stderr, "debug: distinct PCs visited=%zu (last=%03x), unimpl_ever=%d, distinct r_output=%zu, distinct d_output=%zu\n",
+                 visited_pc.size(), dut->pc, unimpl_ever ? 1 : 0, r_values.size(), d_values.size());
 
     // Raw cell dump on stderr: independent of display_render's screen
     // layout/mapping, useful for checking which levels[] cells are

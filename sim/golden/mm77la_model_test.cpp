@@ -1,4 +1,11 @@
 // sim/golden/mm77la_model_test.cpp
+//
+// reset() now lands PC at the chip's real reset vector (0x3C0, see
+// reset()'s own comment), not 0 -- these opcode-semantics tests place
+// their test ROM bytes at offset 0 for convenience, so each explicitly
+// re-seeds PC to 0 via debug_set_pc(0) right after reset() to keep that
+// convention working. Tests specifically about PC/reset behavior set
+// their own PC afterward and are unaffected.
 #include "mm77la_model.h"
 #include <cassert>
 #include <cstdio>
@@ -11,10 +18,22 @@ static int failures = 0;
     } \
 } while (0)
 
+static void test_reset_sets_pc_to_0x3c0() {
+    // Per MAME's pps41_base_device::device_reset(): m_pc = m_prgmask >> 1
+    // & ~0x3f = 0x3C0 for this chip's 11-bit program space -- confirmed
+    // against a real MAME mfootb2 trace, not the reset-to-0 this model
+    // used before.
+    uint8_t rom[8] = {0};
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    CHECK(m.state().pc == 0x3C0);
+}
+
 static void test_reset_fills_ram_with_0xf() {
     uint8_t rom[8] = {0};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     for (int addr = 0; addr < 0x80; addr++) {
         // Only test addresses that are part of the real 96-nibble map;
         // out-of-map addresses are undefined and not checked here.
@@ -30,6 +49,7 @@ static void test_ram_bank_a_mirrors_at_48_and_58_not_50() {
     uint8_t rom[8] = {0};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_ram_write(0x40, 0x3);
     CHECK(m.debug_ram_read(0x48) == 0x3); // mirror of bank A
     CHECK(m.debug_ram_read(0x58) == 0x3); // mirror of bank A
@@ -43,6 +63,7 @@ static void test_ram_bank_c_mirrors_at_68_and_78_not_70() {
     uint8_t rom[8] = {0};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_ram_write(0x60, 0x9);
     CHECK(m.debug_ram_read(0x68) == 0x9);
     CHECK(m.debug_ram_read(0x78) == 0x9);
@@ -56,6 +77,7 @@ static void test_rom_read_mirrors_0x400_0x5ff_at_0x600_0x7ff() {
     for (size_t i = 0; i < sizeof(rom); i++) rom[i] = static_cast<uint8_t>(i & 0xFF);
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     for (uint16_t off = 0; off < 0x200; off++) {
         CHECK(m.debug_rom_read(0x400 + off) == m.debug_rom_read(0x600 + off));
     }
@@ -67,6 +89,7 @@ static void test_pc_lfsr_known_sequence() {
     uint8_t rom[1] = {0};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_pc(0);
     uint16_t expect = 0;
     for (int i = 0; i < 64; i++) {
@@ -86,6 +109,7 @@ static void test_pc_high_bits_are_plain_storage() {
     uint8_t rom[1] = {0};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_pc(0x40); // high bits = 0x40 (bit 6 set), low 6 bits = 0
     m.debug_step_pc_only();
     CHECK((m.state().pc & ~0x3Fu) == 0x40); // high bits untouched by increment_pc
@@ -95,6 +119,7 @@ static void test_lai_loads_a() {
     uint8_t rom[1] = {0x45}; // LAI 5
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.step();
     CHECK(m.state().a == 0x5);
 }
@@ -103,6 +128,7 @@ static void test_lba_sets_bl_no_ram_delay() {
     uint8_t rom[2] = {0x47, 0x76}; // LAI 7; LBA
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.step(); // A = 7
     m.step(); // B low nibble = A = 7, MM78 tier: NO ram_delay
     CHECK((m.state().b & 0xF) == 0x7);
@@ -115,12 +141,14 @@ static void test_a_op_adds_ram_to_accumulator() {
     uint8_t rom[3] = {0x43, 0x76, 0x42}; // LAI 3; LBA; LAI 2
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_ram_write(0x3, 0x3);
     m.step(); m.step(); m.step();
     CHECK(m.state().a == 0x2);
     uint8_t rom2[1] = {0x7E}; // A (add RAM[ram_addr] to A)
     Mm77laModel m2(rom2, sizeof(rom2));
     m2.reset();
+    m2.debug_set_pc(0);
     // Drive state directly since this model instance is fresh: set b/a via steps on rom2
     // is not possible (rom2 has only the A opcode). Use debug setters instead.
     m2.debug_set_a(0x2);
@@ -134,6 +162,7 @@ static void test_com_complements_a() {
     uint8_t rom[1] = {0x77}; // COM
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x3);
     m.step();
     CHECK(m.state().a == 0xC); // 0x3 ^ 0xF
@@ -143,6 +172,7 @@ static void test_aisk_skips_on_no_overflow_and_forces_no_skip_for_dc() {
     uint8_t rom[1] = {0x62}; // AISK 2 (0x60 | 2)
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x1);
     m.step();
     CHECK(m.state().a == 0x3);
@@ -151,6 +181,7 @@ static void test_aisk_skips_on_no_overflow_and_forces_no_skip_for_dc() {
     uint8_t rom2[1] = {0x66}; // AISK 6 -- the "DC" pseudo-op, MM78 forces skip=false
     Mm77laModel m2(rom2, sizeof(rom2));
     m2.reset();
+    m2.debug_set_pc(0);
     m2.debug_set_a(0x1);
     m2.step();
     CHECK(m2.state().skip == false); // forced false regardless of overflow
@@ -161,6 +192,7 @@ static void test_sb_rb_skbf_ram_bits() {
     // SB x sets bit x of RAM[ram_addr]; test bit 1 specifically.
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_b(0x10);
     m.debug_ram_write(0x10, 0x0);
     m.step(); // SB 1 -> RAM[0x10] bit 1 set -> 0x2
@@ -171,6 +203,7 @@ static void test_skmea_skips_when_a_equals_ram() {
     uint8_t rom[1] = {0x7F}; // SKMEA
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x5);
     m.debug_set_b(0x20);
     m.debug_ram_write(0x20, 0x5);
@@ -182,6 +215,7 @@ static void test_i1sk_reads_p_port() {
     uint8_t rom[1] = {0x60};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_p(0x03);
     m.debug_set_a(0x02);
     m.step();
@@ -193,6 +227,7 @@ static void test_ix_writes_opla_output() {
     uint8_t rom[1] = {0x72};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x0);
     m.step();
     CHECK(m.state().io.r_output == 0x03F);
@@ -203,6 +238,7 @@ static void test_ios_requires_two_calls_to_arm() {
     uint8_t rom[2] = {0x2D, 0x2D};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.step();
     CHECK(!m.state().tone.tone_on);
     m.step();
@@ -213,6 +249,7 @@ static void test_int0h_toggles_speaker() {
     uint8_t rom[1] = {0x03};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     CHECK(m.state().tone.spk_output == 2);
     m.step();
     CHECK(m.state().tone.spk_output == 1);
@@ -222,6 +259,7 @@ static void test_sos_ros_skisl_round_trip() {
     uint8_t rom[3] = {0x70, 0x01, 0x71};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_b(0x05);
     m.step();
     CHECK(m.state().io.d_output == (1u << 5));
@@ -232,6 +270,7 @@ static void test_t_jumps_on_page_with_inverted_operand() {
     uint8_t rom[1] = {0x00};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_pc(0x100);
     m.debug_poke_rom(0x100, static_cast<uint8_t>(0xC0 | 0x05)); // T 5
     m.step();
@@ -242,6 +281,7 @@ static void test_tm_pushes_return_address_outside_subroutine_page() {
     uint8_t rom[1] = {0x00};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_pc(0x040); // not in the subroutine page (top page is 0x780-0x7FF)
     m.debug_poke_rom(0x040, static_cast<uint8_t>(0x80 | 0x03)); // TM 3
     m.step();
@@ -253,6 +293,7 @@ static void test_tm_from_subroutine_page_does_not_push() {
     uint8_t rom[1] = {0x00};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_pc(0x7C0); // inside the subroutine page (top page, pc & ~0x7F == 0x780&~0x7F... )
     m.debug_poke_rom(0x7C0, static_cast<uint8_t>(0x80 | 0x03)); // TM 3
     m.debug_set_stack0(0x000);
@@ -264,6 +305,7 @@ static void test_rt_pops_stack() {
     uint8_t rom[1] = {0x2F}; // RT
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_stack0(0x123);
     m.step();
     CHECK(m.state().pc == 0x123);
@@ -273,6 +315,7 @@ static void test_rtsk_pops_and_sets_skip() {
     uint8_t rom[1] = {0x2E}; // RTSK
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_stack0(0x055);
     m.step();
     CHECK(m.state().pc == 0x055);
@@ -285,6 +328,7 @@ static void test_lb_then_eob_coalesce_as_a_pair() {
     uint8_t rom[2] = {static_cast<uint8_t>(0x10 | 0x5), static_cast<uint8_t>(0x08 | 0x2)};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.step(); // LB 5 -> B = 5
     CHECK(m.state().b == 0x5);
     m.step(); // EOB 2 -> Bu ^= (2<<4)
@@ -298,6 +342,7 @@ static void test_successive_lai_coalescing_suppresses_repeat() {
     uint8_t rom[2] = {0x43, 0x47}; // LAI 3; LAI 7
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.step(); // A = 3
     CHECK(m.state().a == 0x3);
     m.step(); // suppressed: A stays 3, NOT 7
@@ -308,6 +353,7 @@ static void test_lai_after_non_lai_is_not_suppressed() {
     uint8_t rom[2] = {0x00, 0x47}; // NOP; LAI 7
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.step(); // NOP
     m.step(); // LAI 7 -- prev op was NOP, not suppressed
     CHECK(m.state().a == 0x7);
@@ -317,6 +363,7 @@ static void test_ac_carry_visible_to_sknc_only_after_one_instruction_delay() {
     uint8_t rom[3] = {0x7C, 0x00, 0x02}; // AC; NOP; SKNC
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0xF);
     m.debug_set_b(0x00);
     m.debug_ram_write(0x00, 0x2); // 0xF + 0x2 = 0x11 -> carry out = 1
@@ -338,6 +385,7 @@ static void test_back_to_back_ac_does_not_lose_first_pending_carry() {
     uint8_t rom[4] = {0x7C, 0x7C, 0x00, 0x02}; // AC; AC; NOP; SKNC
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0xF);
     m.debug_set_b(0x00);
     m.debug_ram_write(0x00, 0x2); // 0xF + 0x2 + c_in(0) = 0x11 -> carry1 = 1, A becomes 0x1
@@ -356,6 +404,7 @@ static void test_xdsk_sets_ram_delay_and_skips_on_wrap_to_f() {
     uint8_t rom[1] = {static_cast<uint8_t>(0x58 | 0x1)}; // XDSK 1
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x9);
     m.debug_set_b(0x00); // Bl = 0, decrementing wraps to 0xF
     m.debug_ram_write(0x00, 0x2);
@@ -371,6 +420,7 @@ static void test_sag_forces_ram_addr_upper_bits_to_3_for_one_cycle_only() {
     uint8_t rom[2] = {0x07, static_cast<uint8_t>(0x20 | 0x1)}; // SAG; SB 1
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_b(0x05); // Bu would normally be 0, not 3
     m.debug_ram_write(0x35, 0x0); // address with Bu=3, Bl=5
     m.step(); // SAG
@@ -396,6 +446,7 @@ static void test_t_dispatches_across_full_high_nibble_range() {
         uint8_t rom[1] = {0x00};
         Mm77laModel m(rom, sizeof(rom));
         m.reset();
+        m.debug_set_pc(0);
         m.debug_set_pc(0x100);
         uint8_t op = static_cast<uint8_t>(hi | 0x05);
         m.debug_poke_rom(0x100, op);
@@ -413,6 +464,7 @@ static void test_tm_dispatches_across_full_high_nibble_range() {
         uint8_t rom[1] = {0x00};
         Mm77laModel m(rom, sizeof(rom));
         m.reset();
+        m.debug_set_pc(0);
         m.debug_set_pc(0x040); // not in the subroutine page
         uint8_t op = static_cast<uint8_t>(hi | 0x03);
         m.debug_poke_rom(0x040, op);
@@ -431,6 +483,7 @@ static void test_tl_dispatches_across_full_high_nibble_range() {
         uint8_t rom[2] = {0x30, op}; // TR; TL(hi) 5
         Mm77laModel m(rom, sizeof(rom));
         m.reset();
+        m.debug_set_pc(0);
         m.step(); // TR
         m.step(); // TL, dispatched because prev_op was TR
         uint16_t expected = static_cast<uint16_t>(((~0x30 & 0xF) << 6) | (~op & 0x3F));
@@ -447,6 +500,7 @@ static void test_tml_dispatches_across_full_high_nibble_range() {
         uint8_t rom[2] = {0x30, op}; // TR; TML(hi) 5
         Mm77laModel m(rom, sizeof(rom));
         m.reset();
+        m.debug_set_pc(0);
         m.debug_set_stack0(0x000);
         m.step(); // TR
         m.step(); // TML, dispatched because prev_op was TR; must also push
@@ -465,6 +519,7 @@ static void test_tlb_dispatches_across_full_high_nibble_range() {
         uint8_t rom[3] = {0x30, 0x30, op}; // TR; TR; TLB(hi) 5
         Mm77laModel m(rom, sizeof(rom));
         m.reset();
+        m.debug_set_pc(0);
         m.step(); // TR
         m.step(); // TR (is_2byte dispatch: another TR, enables 3-byte next)
         m.step(); // TLB, dispatched because prev_op AND prev2_op were TR
@@ -483,6 +538,7 @@ static void test_tmlb_dispatches_across_full_high_nibble_range() {
         uint8_t rom[3] = {0x30, 0x30, op}; // TR; TR; TMLB(hi) 5
         Mm77laModel m(rom, sizeof(rom));
         m.reset();
+        m.debug_set_pc(0);
         m.debug_set_stack0(0x000);
         m.step(); // TR
         m.step(); // TR
@@ -502,6 +558,7 @@ static void test_rc_clears_carry_immediately() {
     uint8_t rom2[2] = {0x06, 0x05}; // SC; RC
     Mm77laModel m2(rom2, sizeof(rom2));
     m2.reset();
+    m2.debug_set_pc(0);
     m2.step(); // SC
     CHECK(m2.state().c == 1);
     CHECK(m2.state().c_in == 1);
@@ -515,6 +572,7 @@ static void test_sc_sets_carry_immediately() {
     uint8_t rom[1] = {0x06}; // SC
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     CHECK(m.state().c == 0);
     CHECK(m.state().c_in == 0);
     m.step();
@@ -553,6 +611,7 @@ static void test_skip_count_skips_forward_a_plus_1_instructions() {
     };
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x2);
     m.step(); // TAB decoded; effect not applied yet
     CHECK(m.state().skip_count == 0);
@@ -590,6 +649,7 @@ static void test_skip_count_of_one_via_a_equals_0xf_skips_exactly_one() {
     };
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x0);
     m.step(); // TAB
     m.step(); // NOP; fires: skip_count = 0+1 = 1, A = 0xF
@@ -612,6 +672,7 @@ static void test_tab_back_to_back_fires_twice() {
     uint8_t rom[3] = {0x2C, 0x2C, 0x00}; // TAB; TAB; NOP
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x1);
     m.step(); // TAB #1 decoded; nothing fires yet
     CHECK(m.state().skip_count == 0);
@@ -629,6 +690,7 @@ static void test_tr_prefixed_tl_jumps_off_page() {
     uint8_t rom[2] = {0x30, static_cast<uint8_t>(0xC0 | 0x05)}; // TR; TL 5
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.step(); // TR: prefix only, no direct effect
     m.step(); // TL 5, dispatched because prev_op was TR
     uint16_t expected = static_cast<uint16_t>(((~0x30 & 0xF) << 6) | (~0xC5 & 0x3F));
@@ -651,6 +713,7 @@ static void test_skip_continues_through_tr_prefixed_instruction() {
     };
     Mm77laModel m(rom2, sizeof(rom2));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x5);
     m.debug_set_b(0x00);
     m.debug_ram_write(0x00, 0x5);
@@ -692,6 +755,7 @@ static void test_skip_consuming_tr_prefix_does_not_leave_prev_op_stale() {
     };
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x5);
     m.debug_set_b(0x00);
     m.debug_ram_write(0x00, 0x5);
@@ -737,6 +801,7 @@ static void test_aisk_skip_into_tr_tl_one_byte_per_step_no_double_consume() {
     };
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x0);
 
     m.step(); // AISK 2: A becomes 2, sets skip=true (sum=2 < 0x10)
@@ -792,6 +857,7 @@ static void test_tab_fires_one_opcode_after_next() {
     uint8_t rom[2] = {0x2C, 0x00}; // TAB; NOP
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x3);
     m.step(); // TAB decoded; its effect has NOT applied yet
     CHECK(m.state().skip_count == 0);
@@ -811,6 +877,7 @@ static void test_tab_skip_count_wraps_at_4_bits_when_a_is_0xf() {
     uint8_t rom[2] = {0x2C, 0x00}; // TAB; NOP
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0xF);
     m.step(); // TAB decoded; its effect has NOT applied yet
     m.step(); // NOP executes; TAB's delayed effect fires at the end of THIS step
@@ -822,6 +889,7 @@ static void test_int1l_is_noop_but_flags_hit() {
     uint8_t rom[1] = {0x04}; // INT1L (0x04 per the MM78 opcode table)
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x3);
     m.step();
     CHECK(m.state().a == 0x3);      // no architectural effect
@@ -832,6 +900,7 @@ static void test_xas_swaps_a_and_s() {
     uint8_t rom[1] = {0x74}; // XAS
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x5);
     // s starts at 0 (Mm77laState's default) -- no debug setter needed
     m.step();
@@ -843,6 +912,7 @@ static void test_lxa_loads_x_from_a() {
     uint8_t rom[1] = {0x75}; // LXA
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x7);
     m.step();
     CHECK(m.state().x == 0x7); // x = a
@@ -859,6 +929,7 @@ static void test_xax_swaps_a_and_x() {
     };
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.step(); // LXA: x = 0x0
     m.step(); // LAI 9: a = 0x9
     CHECK(m.state().a == 0x9);
@@ -885,6 +956,7 @@ static void test_skip_consumed_cycle_still_advances_display_window() {
     };
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
+    m.debug_set_pc(0);
     m.debug_set_a(0x0);
 
     m.step(); // AISK 2: ordinary dispatch cycle, sets skip=true
@@ -897,6 +969,7 @@ static void test_skip_consumed_cycle_still_advances_display_window() {
 }
 
 int main() {
+    test_reset_sets_pc_to_0x3c0();
     test_reset_fills_ram_with_0xf();
     test_ram_bank_a_mirrors_at_48_and_58_not_50();
     test_ram_bank_c_mirrors_at_68_and_78_not_70();

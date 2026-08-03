@@ -24,7 +24,10 @@ int main(int argc, char** argv) {
     dut->clk = 1; dut->eval();
     dut->rst_n = 1;
 
-    uint16_t expect_pc = 0;
+    // Reset PC per MAME's pps41_base_device::device_reset(): m_pc =
+    // m_prgmask >> 1 & ~0x3f = 0x3C0 for this chip's 11-bit program
+    // space -- confirmed against a real MAME mfootb2 trace.
+    uint16_t expect_pc = 0x3C0;
     CHECK(dut->rom_addr == expect_pc);
 
     for (int i = 0; i < 70; i++) {
