@@ -1,5 +1,8 @@
 // sim/golden/mm77la_model.cpp
 #include "mm77la_model.h"
+#include "mm77la_opla.h"
+#include "mm77la_tone.h"
+#include "mm77la_io.h"
 
 Mm77laModel::Mm77laModel(const uint8_t* rom, size_t rom_size)
     : rom_(rom), rom_size_(rom_size) {
@@ -35,6 +38,8 @@ Mm77laModel::Mm77laModel(const uint8_t* rom, size_t rom_size)
 void Mm77laModel::reset() {
     st_ = Mm77laState{};
     ram_.fill(0xF);
+    tone_reset(st_.tone);
+    io_reset(st_.io);
 }
 
 uint8_t Mm77laModel::rom_read(uint16_t addr) const {
@@ -153,6 +158,7 @@ void Mm77laModel::step() {
     // 0x72 passes through as a discarded skip byte or a TR-prefixed operand
     // byte rather than being genuinely dispatched as an opcode.
     st_.ix_executed = false;
+    tone_cycle(st_.tone);
 
     uint8_t op = rom_read(st_.pc);
     increment_pc();
@@ -289,12 +295,14 @@ void Mm77laModel::step() {
             case 0x10: { bool suppressed = (st_.prev_op & 0xF0) == 0x10; if (!suppressed) st_.b = op & 0xF; break; } // LB x
             case 0x30: break; // TR prefix, no direct effect
             case 0x40: { bool suppressed = (st_.prev_op & 0xF0) == 0x40; if (!suppressed) st_.a = op & 0xF; break; } // LAI x
-            case 0x60: { // AISK x (x!=0); I1SK (x==0) is Task 5/7 I/O work, left as no-op here
+            case 0x60: { // AISK x (x!=0); I1SK (x==0)
                 uint8_t x = op & 0xF;
                 if (x != 0) {
                     uint8_t sum = static_cast<uint8_t>(st_.a + x);
                     st_.a = sum & 0xF;
                     st_.skip = (x == 6) ? false : (sum < 0x10);
+                } else {
+                    st_.skip = io_i1sk(st_.io, st_.a);
                 }
                 break;
             }
@@ -317,7 +325,17 @@ void Mm77laModel::step() {
             }
             default: {
                 switch (op & 0xFC) {
-                    case 0x08: { bool suppressed = (st_.prev_op & 0xFC) == 0x08; if (!suppressed) st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4)); break; } // EOB x
+                    case 0x08: case 0x0C: { // EOB x -- reachable via BOTH the 0x08-0x0B and
+                        // 0x0C-0x0F byte ranges (MAME mm78.cpp: `case 0x08: case 0x0c:
+                        // op_eob();`), both using the low 2 bits as the immediate. Phase 1
+                        // only handled 0x08; the real ROM hits 0x0C-range EOB bytes within
+                        // its first ~150 cycles (found via Phase 2's unimpl_hit
+                        // instrumentation) -- this was a genuine bug, not a Phase-2-scope
+                        // opcode. Suppression covers the whole 0x08-0x0F range, not just 0x08.
+                        bool suppressed = (st_.prev_op & 0xF8) == 0x08;
+                        if (!suppressed) st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
+                        break;
+                    }
                     case 0x20: { uint8_t val = ram_read(static_cast<uint8_t>(ram_addr)); ram_write(static_cast<uint8_t>(ram_addr), val | (1 << (op & 0x3))); break; } // SB x
                     case 0x24: { uint8_t val = ram_read(static_cast<uint8_t>(ram_addr)); ram_write(static_cast<uint8_t>(ram_addr), val & ~(1 << (op & 0x3))); break; } // RB x
                     case 0x28: { uint8_t val = ram_read(static_cast<uint8_t>(ram_addr)); st_.skip = (val & (1 << (op & 0x3))) == 0; break; } // SKBF x
@@ -362,7 +380,19 @@ void Mm77laModel::step() {
                             case 0x2C: st_.tab_pending = true; break; // TAB -- delayed fire
                             case 0x2E: { st_.pc = st_.stack[0] & 0x7FF; st_.stack[0] = st_.stack[1]; st_.skip = true; break; } // RTSK
                             case 0x2F: { st_.pc = st_.stack[0] & 0x7FF; st_.stack[0] = st_.stack[1]; break; } // RT
-                            case 0x72: st_.ix_executed = true; break; // IX -- stub, no PLA wiring this phase; flagged for the testbench
+                            case 0x01: st_.skip = io_skisl(st_.io, static_cast<uint8_t>(ram_addr)); break; // SKISL
+                            case 0x03: tone_int0h(st_.tone); break; // INT0H
+                            case 0x2D: tone_ios(st_.tone, st_.a); break; // IOS
+                            case 0x70: io_sos(st_.io, static_cast<uint8_t>(ram_addr)); break; // SOS
+                            case 0x71: io_ros(st_.io, static_cast<uint8_t>(ram_addr)); break; // ROS
+                            case 0x72: { // IX
+                                st_.ix_executed = true;
+                                st_.io.r_output = opla_ix(st_.a);
+                                break;
+                            }
+                            case 0x73: io_ox(st_.io, st_.a, st_.c_in); break; // OX
+                            case 0x78: st_.a = io_i2c(st_.io); break; // I2C
+                            case 0x7B: io_ioa(st_.io, st_.a, st_.c_in); break; // IOA
                             case 0x76: st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | st_.a); break; // LBA (MM78: no ram_delay)
                             case 0x77: st_.a = st_.a ^ 0xF; break; // COM
                             case 0x7A: { uint8_t tmp = st_.a; st_.a = st_.b & 0xF; st_.b = static_cast<uint8_t>((st_.b & ~0xFu) | tmp); st_.ram_delay = true; break; } // XAB
@@ -370,7 +400,7 @@ void Mm77laModel::step() {
                             case 0x7D: { uint8_t sum = static_cast<uint8_t>(st_.a + ram_read(static_cast<uint8_t>(ram_addr)) + st_.c_in); st_.c = (sum >> 4) & 1; st_.a = sum & 0xF; st_.c_delay = true; st_.skip = st_.c != 0; break; } // ACSK -- MM78: skip if NEW carry (inverted vs MM76)
                             case 0x7E: st_.a = static_cast<uint8_t>((st_.a + ram_read(static_cast<uint8_t>(ram_addr))) & 0xF); break; // A
                             case 0x7F: st_.skip = (st_.a == ram_read(static_cast<uint8_t>(ram_addr))); break; // SKMEA
-                            default: break; // unimplemented opcodes fall through as NOP until later tasks
+                            default: st_.unimpl_hit = true; break; // unimplemented (LXA/XAX/XAS, etc.)
                         }
                         break;
                     }

@@ -178,23 +178,62 @@ static void test_skmea_skips_when_a_equals_ram() {
     CHECK(m.state().skip == true);
 }
 
-static void test_i1sk_is_noop() {
-    // I1SK (opcode 0x60, AISK with x==0) is a no-op in this task;
-    // real P-port I/O support comes in Task 5/7. Verify state is unchanged.
-    uint8_t rom[1] = {0x60}; // I1SK
+static void test_i1sk_reads_p_port() {
+    uint8_t rom[1] = {0x60};
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
-    m.debug_set_a(0x7);
-    m.debug_set_b(0x3);
-    // Capture state before step
-    uint8_t a_before = m.state().a;
-    bool skip_before = m.state().skip;
-    uint8_t b_before = m.state().b;
+    m.debug_set_p(0x03);
+    m.debug_set_a(0x02);
     m.step();
-    // Verify all state is unchanged after I1SK no-op
-    CHECK(m.state().a == a_before);
-    CHECK(m.state().skip == skip_before);
-    CHECK(m.state().b == b_before);
+    CHECK(m.state().a == 0x5);
+    CHECK(m.state().skip);
+}
+
+static void test_ix_writes_opla_output() {
+    uint8_t rom[1] = {0x72};
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x0);
+    m.step();
+    CHECK(m.state().io.r_output == 0x03F);
+    CHECK(m.state().ix_executed);
+}
+
+static void test_ios_requires_two_calls_to_arm() {
+    uint8_t rom[2] = {0x2D, 0x2D};
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.step();
+    CHECK(!m.state().tone.tone_on);
+    m.step();
+    CHECK(m.state().tone.tone_on);
+}
+
+static void test_int0h_toggles_speaker() {
+    uint8_t rom[1] = {0x03};
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    CHECK(m.state().tone.spk_output == 2);
+    m.step();
+    CHECK(m.state().tone.spk_output == 1);
+}
+
+static void test_sos_ros_skisl_round_trip() {
+    uint8_t rom[3] = {0x70, 0x01, 0x71};
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_b(0x05);
+    m.step();
+    CHECK(m.state().io.d_output == (1u << 5));
+}
+
+static void test_unimplemented_opcode_sets_flag() {
+    uint8_t rom[1] = {0x75};
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    CHECK(!m.state().unimpl_hit);
+    m.step();
+    CHECK(m.state().unimpl_hit);
 }
 
 static void test_t_jumps_on_page_with_inverted_operand() {
@@ -812,7 +851,12 @@ int main() {
     test_aisk_skips_on_no_overflow_and_forces_no_skip_for_dc();
     test_sb_rb_skbf_ram_bits();
     test_skmea_skips_when_a_equals_ram();
-    test_i1sk_is_noop();
+    test_i1sk_reads_p_port();
+    test_ix_writes_opla_output();
+    test_ios_requires_two_calls_to_arm();
+    test_int0h_toggles_speaker();
+    test_sos_ros_skisl_round_trip();
+    test_unimplemented_opcode_sets_flag();
     test_t_jumps_on_page_with_inverted_operand();
     test_tm_pushes_return_address_outside_subroutine_page();
     test_tm_from_subroutine_page_does_not_push();
