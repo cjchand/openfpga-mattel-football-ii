@@ -107,6 +107,12 @@ void Mm77laModel::debug_poke_rom(uint16_t addr, uint8_t value) {
     rom_size_ = rom_buffer_.size();
 }
 
+void Mm77laModel::update_display() {
+    uint16_t rowsel, rowdata;
+    display_mux(st_.io.d_output, st_.io.r_output, rowsel, rowdata);
+    display_pwm_step(st_.display, rowsel, rowdata);
+}
+
 void Mm77laModel::increment_pc() {
     int feed = ((st_.pc & 0x3e) == 0) ? 1 : 0;
     feed ^= (st_.pc >> 1 ^ st_.pc) & 1;
@@ -236,6 +242,25 @@ void Mm77laModel::step() {
             st_.a = 0xF;
             st_.tab_pending = false;
         }
+        // update_display() must run on EVERY step() call, not just ones that
+        // reach the bottom of this function -- the RTL's dpwm (see
+        // pps41_core_tb.cpp) clocks unconditionally every cycle regardless
+        // of the core's internal skip state, using whatever D/R the core is
+        // currently holding (no opcode ran this cycle to change them, so
+        // they're simply this cycle's held-over value -- exactly what
+        // st_.io.d_output/r_output already are at this point, since nothing
+        // above this line in the skip-consumed path writes to st_.io). Before
+        // this fix, the early `return` below skipped update_display()
+        // entirely on skip-consumed cycles, silently starving
+        // st_.display.window_pos of an advance every time a byte was
+        // consumed as a skip target (SKAEI/SKBEI misses, TAB's skip_count,
+        // TR-continuation bytes) -- invisible in the 30-cycle regression
+        // vectors (all far short of kDisplayWindow=1583) but would have
+        // desynced the golden model from the RTL the first time a
+        // skip-heavy run crossed a window boundary. See
+        // test_skip_consumed_cycle_still_advances_display_window in
+        // mm77la_model_test.cpp.
+        update_display();
         return;
     }
 
@@ -436,7 +461,5 @@ void Mm77laModel::step() {
     st_.prev2_op = st_.prev_op;
     st_.prev_op = op;
 
-    uint16_t rowsel, rowdata;
-    display_mux(st_.io.d_output, st_.io.r_output, rowsel, rowdata);
-    display_pwm_step(st_.display, rowsel, rowdata);
+    update_display();
 }

@@ -74,6 +74,13 @@ private:
     uint8_t ram_read(uint8_t addr) const;
     void ram_write(uint8_t addr, uint8_t val);
     void increment_pc();
+    // Samples the CURRENT st_.io.d_output/r_output (whatever this cycle's
+    // dispatch left them as -- freshly written by SOS/ROS/IOA/OX/IX if one
+    // of those just ran, otherwise unchanged from the previous cycle) into
+    // the display matrix mux + PWM accumulator. Must run on EVERY step()
+    // call, including the consumed_by_skip early-return path -- see the two
+    // call sites in step() and the comment there for why.
+    void update_display();
 
     const uint8_t* rom_;
     size_t rom_size_;

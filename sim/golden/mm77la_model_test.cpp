@@ -837,6 +837,35 @@ static void test_int1l_is_noop_but_flags_hit() {
     CHECK(m.state().int1l_hit == true); // but flagged for the testbench
 }
 
+static void test_skip_consumed_cycle_still_advances_display_window() {
+    // Regression for a bug where update_display() (display_mux +
+    // display_pwm_step) was only called at the very bottom of step(), after
+    // the consumed_by_skip block's early `return` -- so any cycle where the
+    // freshly-fetched byte was consumed as a skip target (rather than
+    // reaching real dispatch) silently failed to advance
+    // st_.display.window_pos at all. The RTL's dpwm (pps41_core_tb.cpp)
+    // clocks unconditionally every single cycle regardless of the core's
+    // skip state, so the golden model must too, or the two desync the first
+    // time a skip-heavy run crosses a window boundary (kDisplayWindow=1583
+    // cycles -- far longer than any 30-cycle regression vector, which is
+    // exactly why this was invisible until now).
+    uint8_t rom[2] = {
+        static_cast<uint8_t>(0x60 | 0x2), // AISK 2 -- A=0 so sum=2 < 0x10: sets skip=true
+        0x00,                              // NOP -- consumed as the skip target, never dispatched
+    };
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x0);
+
+    m.step(); // AISK 2: ordinary dispatch cycle, sets skip=true
+    CHECK(m.state().skip == true);
+    uint16_t window_pos_after_aisk = m.state().display.window_pos;
+
+    m.step(); // NOP byte consumed by skip -- must still tick the display window
+    CHECK(m.state().skip == false); // AISK's skip is a single 1-byte skip, now consumed
+    CHECK(m.state().display.window_pos == static_cast<uint16_t>(window_pos_after_aisk + 1));
+}
+
 int main() {
     test_reset_fills_ram_with_0xf();
     test_ram_bank_a_mirrors_at_48_and_58_not_50();
@@ -887,6 +916,7 @@ int main() {
     test_skip_count_skips_forward_a_plus_1_instructions();
     test_skip_count_of_one_via_a_equals_0xf_skips_exactly_one();
     test_tab_back_to_back_fires_twice();
+    test_skip_consumed_cycle_still_advances_display_window();
     if (failures == 0) { std::printf("PASS\n"); return 0; }
     std::printf("%d FAILURE(S)\n", failures);
     return 1;
