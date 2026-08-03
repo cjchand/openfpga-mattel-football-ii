@@ -515,17 +515,19 @@ core_bridge_cmd icb (
         .rom_data       ( rom_data_w )
     );
 
-    // p_input bit mapping, per docs/initial-plan.md §7's IN.0 table and the
-    // template's own cont1_key bit comment (this file, ~line 187-202).
+    // p_input bit mapping, per docs/initial-plan.md §7's IN.0 table.
+    // Face buttons match the real device's layout (Phase 5 remap):
+    // top=Score, bottom=Kick, left=Status, right=Pass. Select/Start are
+    // kept as redundant alternates for Status/Score.
     wire [7:0] p_input_w = {
-        cont1_key[2],  // bit7: Left     = dpad_left
-        cont1_key[1],  // bit6: Down     = dpad_down
-        cont1_key[5],  // bit5: Pass     = face_b
-        cont1_key[4],  // bit4: Kick     = face_a
-        cont1_key[3],  // bit3: Right    = dpad_right
-        cont1_key[0],  // bit2: Up       = dpad_up
-        cont1_key[14], // bit1: Status   = face_select
-        cont1_key[15]  // bit0: Score    = face_start
+        cont1_key[2],                  // bit7: Left     = dpad_left
+        cont1_key[1],                  // bit6: Down     = dpad_down
+        cont1_key[4],                  // bit5: Pass     = face_a (right)
+        cont1_key[5],                  // bit4: Kick     = face_b (bottom)
+        cont1_key[3],                  // bit3: Right    = dpad_right
+        cont1_key[0],                  // bit2: Up       = dpad_up
+        cont1_key[7] | cont1_key[14],  // bit1: Status   = face_y (left) | Select
+        cont1_key[6] | cont1_key[15]   // bit0: Score    = face_x (top)  | Start
     };
 
     wire [9:0]  r_output_w;
