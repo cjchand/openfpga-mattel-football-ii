@@ -120,6 +120,8 @@ int main(int argc, char** argv) {
         if (dut->spk_output_result != g.tone.spk_output) { std::printf("cycle %ld: spk_output mismatch rtl=%d golden=%d\n", i, dut->spk_output_result, g.tone.spk_output); mismatch = true; }
         if (dut->ios_state_result != g.tone.ios_state) { std::printf("cycle %ld: ios_state mismatch rtl=%d golden=%d\n", i, dut->ios_state_result, g.tone.ios_state); mismatch = true; }
         if (dut->unimpl_hit_out != (g.unimpl_hit ? 1 : 0)) { std::printf("cycle %ld: unimpl_hit mismatch rtl=%d golden=%d\n", i, dut->unimpl_hit_out, g.unimpl_hit); mismatch = true; }
+        if (dut->x_out != g.x) { std::printf("cycle %ld: x mismatch rtl=%x golden=%x\n", i, dut->x_out, g.x); mismatch = true; }
+        if (dut->s_out != g.s) { std::printf("cycle %ld: s mismatch rtl=%x golden=%x\n", i, dut->s_out, g.s); mismatch = true; }
 
         for (int addr = 0; addr < 0x80 && !mismatch; addr++) {
             uint8_t idx = ram_phys_index(static_cast<uint8_t>(addr));

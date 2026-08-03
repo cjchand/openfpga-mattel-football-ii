@@ -14,10 +14,10 @@ struct Mm77laState {
     uint16_t pc = 0;      // 11-bit program counter
     uint8_t a = 0;         // 4-bit accumulator
     uint8_t b = 0;          // 7-bit RAM address reg (Bu = bits 4-6, Bl = bits 0-3)
-    uint8_t x = 0;            // 4-bit secondary register
+    uint8_t x = 0;            // 4-bit secondary register, written by LXA/XAX
     uint8_t c = 0;              // 1-bit immediate carry
     uint8_t c_in = 0;            // 1-bit delayed carry, what SKNC actually reads
-    uint8_t s = 0;                 // 4-bit serial shift register (unused by FBII, modeled anyway)
+    uint8_t s = 0;                 // 4-bit serial shift register, written by XAS (serial-out pin not modeled -- unused by this game, see mm77la_model.cpp's XAS case)
     std::array<uint16_t, 2> stack{}; // 2-level return address stack, stack[0] = top
     bool skip = false;
     uint8_t skip_count = 0;

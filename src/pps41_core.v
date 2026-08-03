@@ -55,7 +55,9 @@ module pps41_core (
     output wire [1:0]     spk_output_result,
     output wire [1:0]      ios_state_result,
     output wire              skisl_skip_out,
-    output wire                unimpl_hit_out
+    output wire                unimpl_hit_out,
+    output wire [3:0]  x_out,
+    output wire [3:0]  s_out
 );
     reg [10:0] pc_reg;
     reg [6:0]  b_reg;
@@ -64,9 +66,9 @@ module pps41_core (
 
     // Architectural state (Task 13): mirrors Mm77laState.
     reg [3:0]  a;
-    reg [3:0]  x;           // unused by any implemented opcode; carried for parity with golden state
+    reg [3:0]  x;           // written by LXA/XAX; carried for parity with golden state
     reg        c, c_in, c_delay;
-    reg [3:0]  s;            // unused by any implemented opcode; carried for parity with golden state
+    reg [3:0]  s;            // written by XAS (serial-out pin not modeled); carried for parity with golden state
     reg [10:0] stack0, stack1;
     reg        skip;
     reg [3:0]  skip_count;
@@ -122,6 +124,8 @@ module pps41_core (
     assign ios_state_result       = ios_state_out;
     assign skisl_skip_out           = io_skisl_skip;
     assign unimpl_hit_out           = unimpl_hit;
+    assign x_out = x;
+    assign s_out = s;
 
     // Sparse 96-nibble RAM map: real storage indices are picked with the
     // same bank logic as sim/golden/mm77la_model.cpp's ram_phys_index --
@@ -508,6 +512,17 @@ module pps41_core (
                                     end
                                     8'h7E: next_a = alu_result; // A
                                     8'h7F: next_skip = (a == ram_rdata); // SKMEA
+                                    8'h74: begin // XAS -- swap A<->S (serial-out pin not modeled, unused by this game)
+                                        xchg_tmp = a;
+                                        next_a   = s;
+                                        next_s   = xchg_tmp;
+                                    end
+                                    8'h75: next_x = a; // LXA
+                                    8'h79: begin // XAX -- swap A<->X
+                                        xchg_tmp = a;
+                                        next_a   = x;
+                                        next_x   = xchg_tmp;
+                                    end
                                     default: next_unimpl_hit = 1'b1; // unimplemented (LXA/XAX/XAS, etc.)
                                 endcase
                             end

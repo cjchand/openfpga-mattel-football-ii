@@ -427,6 +427,24 @@ void Mm77laModel::step() {
                             case 0x7D: { uint8_t sum = static_cast<uint8_t>(st_.a + ram_read(static_cast<uint8_t>(ram_addr)) + st_.c_in); st_.c = (sum >> 4) & 1; st_.a = sum & 0xF; st_.c_delay = true; st_.skip = st_.c != 0; break; } // ACSK -- MM78: skip if NEW carry (inverted vs MM76)
                             case 0x7E: st_.a = static_cast<uint8_t>((st_.a + ram_read(static_cast<uint8_t>(ram_addr))) & 0xF); break; // A
                             case 0x7F: st_.skip = (st_.a == ram_read(static_cast<uint8_t>(ram_addr))); break; // SKMEA
+                            case 0x74: { // XAS -- swap A<->S. Real hardware also updates a
+                                // serial data-out pin; Football II's MAME driver never wires
+                                // that pin to anything observable (see initial-plan.md §7's
+                                // I/O summary -- only write_d/write_r/write_spk/read_d/read_p
+                                // are connected), so the register swap is the entire
+                                // architecturally-visible effect for this game.
+                                uint8_t tmp = st_.a;
+                                st_.a = st_.s;
+                                st_.s = tmp;
+                                break;
+                            }
+                            case 0x75: st_.x = st_.a; break; // LXA
+                            case 0x79: { // XAX -- swap A<->X
+                                uint8_t tmp = st_.a;
+                                st_.a = st_.x;
+                                st_.x = tmp;
+                                break;
+                            }
                             default: st_.unimpl_hit = true; break; // unimplemented (LXA/XAX/XAS, etc.)
                         }
                         break;

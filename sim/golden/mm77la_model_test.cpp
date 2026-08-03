@@ -227,15 +227,6 @@ static void test_sos_ros_skisl_round_trip() {
     CHECK(m.state().io.d_output == (1u << 5));
 }
 
-static void test_unimplemented_opcode_sets_flag() {
-    uint8_t rom[1] = {0x75};
-    Mm77laModel m(rom, sizeof(rom));
-    m.reset();
-    CHECK(!m.state().unimpl_hit);
-    m.step();
-    CHECK(m.state().unimpl_hit);
-}
-
 static void test_t_jumps_on_page_with_inverted_operand() {
     // T x encodes as 0xC0 | x; the destination low-6 bits are ~x & 0x3f.
     uint8_t rom[1] = {0x00};
@@ -837,6 +828,45 @@ static void test_int1l_is_noop_but_flags_hit() {
     CHECK(m.state().int1l_hit == true); // but flagged for the testbench
 }
 
+static void test_xas_swaps_a_and_s() {
+    uint8_t rom[1] = {0x74}; // XAS
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x5);
+    // s starts at 0 (Mm77laState's default) -- no debug setter needed
+    m.step();
+    CHECK(m.state().a == 0x0); // a took s's old value (0)
+    CHECK(m.state().s == 0x5); // s took a's old value (5)
+}
+
+static void test_lxa_loads_x_from_a() {
+    uint8_t rom[1] = {0x75}; // LXA
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_a(0x7);
+    m.step();
+    CHECK(m.state().x == 0x7); // x = a
+    CHECK(m.state().a == 0x7); // a unchanged
+}
+
+static void test_xax_swaps_a_and_x() {
+    // LXA first to put a known value in x, then XAX to swap it back into a
+    // after a's own value changes -- proves XAX round-trips correctly.
+    uint8_t rom[3] = {
+        0x75,       // LXA -- x = a (a starts 0x0, so x = 0x0)
+        0x40 | 0x9, // LAI 9 -- a = 9 (prev op was LXA, not LAI, so not suppressed)
+        0x79,       // XAX -- swap a<->x
+    };
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.step(); // LXA: x = 0x0
+    m.step(); // LAI 9: a = 0x9
+    CHECK(m.state().a == 0x9);
+    m.step(); // XAX: a<->x
+    CHECK(m.state().a == 0x0); // a took x's old value
+    CHECK(m.state().x == 0x9); // x took a's old value
+}
+
 static void test_skip_consumed_cycle_still_advances_display_window() {
     // Regression for a bug where update_display() (display_mux +
     // display_pwm_step) was only called at the very bottom of step(), after
@@ -885,7 +915,6 @@ int main() {
     test_ios_requires_two_calls_to_arm();
     test_int0h_toggles_speaker();
     test_sos_ros_skisl_round_trip();
-    test_unimplemented_opcode_sets_flag();
     test_t_jumps_on_page_with_inverted_operand();
     test_tm_pushes_return_address_outside_subroutine_page();
     test_tm_from_subroutine_page_does_not_push();
@@ -905,6 +934,9 @@ int main() {
     test_tab_fires_one_opcode_after_next();
     test_tab_skip_count_wraps_at_4_bits_when_a_is_0xf();
     test_int1l_is_noop_but_flags_hit();
+    test_xas_swaps_a_and_s();
+    test_lxa_loads_x_from_a();
+    test_xax_swaps_a_and_x();
     test_t_dispatches_across_full_high_nibble_range();
     test_tm_dispatches_across_full_high_nibble_range();
     test_tl_dispatches_across_full_high_nibble_range();
