@@ -16,7 +16,7 @@ sim:
 
 bitstream:
 	docker run --platform linux/amd64 --rm -t \
-		-v $(PWD)/src/fpga:/build -w /build \
+		-v $(PWD)/src:/build -w /build/fpga \
 		$(QUARTUS_IMAGE) quartus_sh --flow compile $(QPF)
 
 package:

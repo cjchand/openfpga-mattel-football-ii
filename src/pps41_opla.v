@@ -1,10 +1,11 @@
 // src/pps41_opla.v
-`include "pps41_opla_table.vh"
-
 module pps41_opla (
     input  wire [3:0] a,
     output wire [9:0] r_out
 );
+    /* verilator lint_off VARHIDDEN */
+    `include "pps41_opla_table.vh"
+    /* verilator lint_on VARHIDDEN */
     wire [9:0] raw = opla_table(a);
     wire [9:0] out = ~raw & 10'h3FF;
 
