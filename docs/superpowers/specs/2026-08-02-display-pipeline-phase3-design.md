@@ -214,9 +214,14 @@ across real gameplay-derived I/O, not just synthetic vectors.
 - The extended lockstep harness (now diffing per-cell accumulator state
   every cycle and the settled snapshot every window) passes zero-mismatch
   on the real ROM run.
-- The `D[11]`-is-the-DP-data-bit finding and the row/LED grouping table in
+- ~~The `D[11]`-is-the-DP-data-bit finding and the row/LED grouping table in
   §2 are confirmed against real-ROM `D`/`R` activity, not left as
-  spec-derived-only claims.
+  spec-derived-only claims.~~ **Not met by Task 7's real-ROM run:** see the
+  findings paragraph below — `D[11]` was never set once and no cell ever
+  reached even the dim threshold across the full 200,000 cycles, so neither
+  the DP-data-bit finding nor the row/LED grouping table has real-ROM
+  evidence for or against it. Both remain spec-derived-only claims,
+  unconfirmed by this run.
 
 **Real-ROM run results (Task 7, `./sim/obj_dir_core/Vpps41_core
 development-assets/b8000-12 200000`, no button-press stimulus, `p_input`
