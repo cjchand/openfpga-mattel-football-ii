@@ -111,15 +111,15 @@ screenshot:
 	$(MAKE) -C obj_dir_core_dmux -f Vpps41_display_mux.mk Vpps41_display_mux__ALL.a
 	$(VERILATOR) --cc ../src/pps41_display_pwm.v --Mdir obj_dir_core_dpwm -Wall --Wno-UNUSEDSIGNAL
 	$(MAKE) -C obj_dir_core_dpwm -f Vpps41_display_pwm.mk Vpps41_display_pwm__ALL.a
-	$(VERILATOR) --cc ../src/display_render.v --Mdir obj_dir_core_render -Wall --Wno-UNUSEDSIGNAL --Wno-WIDTH
-	$(MAKE) -C obj_dir_core_render -f Vdisplay_render.mk Vdisplay_render__ALL.a
+	$(VERILATOR) --cc ../src/video_renderer.v ../src/field_rom.v ../src/label_rom.v --Mdir obj_dir_core_render -Wall --Wno-UNUSEDSIGNAL --Wno-WIDTH
+	$(MAKE) -C obj_dir_core_render -f Vvideo_renderer.mk Vvideo_renderer__ALL.a
 	$(VERILATOR) --cc -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v \
 		--exe screenshot_tb.cpp \
 		--Mdir obj_dir_screenshot -Wall --Wno-UNUSEDSIGNAL -Wno-WIDTH \
 		-CFLAGS "-I.. -I../obj_dir_core_dmux -I../obj_dir_core_dpwm -I../obj_dir_core_render" \
-		-LDFLAGS "../obj_dir_core_dmux/Vpps41_display_mux__ALL.a ../obj_dir_core_dpwm/Vpps41_display_pwm__ALL.a ../obj_dir_core_render/Vdisplay_render__ALL.a"
+		-LDFLAGS "../obj_dir_core_dmux/Vpps41_display_mux__ALL.a ../obj_dir_core_dpwm/Vpps41_display_pwm__ALL.a ../obj_dir_core_render/Vvideo_renderer__ALL.a"
 	$(MAKE) -C obj_dir_screenshot -f Vpps41_core.mk
-	./obj_dir_screenshot/Vpps41_core "$(ROM)" "$(CYCLES)" "$(OUT)" $(STIM)
+	cd ../src && ../sim/obj_dir_screenshot/Vpps41_core "$(ROM)" "$(CYCLES)" "$(OUT)" $(STIM)
 
 # Regression check for the real, MAME-confirmed startup display state
 # (see startup_state_tb.cpp). Requires the user-supplied ROM, same as

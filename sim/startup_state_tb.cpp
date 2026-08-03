@@ -34,7 +34,7 @@ static const long RUN_CYCLES = 20000;
 
 // Segment bits: bit0=a(top) 1=b(upper-right) 2=c(lower-right) 3=d(bottom)
 // 4=e(lower-left) 5=f(upper-left) 6=g(middle) 7=dp -- MAME's led7seg
-// convention (see src/display_render.v's header comment).
+// convention (see src/video_renderer.v's header comment).
 static const int SEG_0  = 0x3F; // a,b,c,d,e,f
 static const int SEG_1  = 0x06; // b,c
 static const int SEG_5D = 0xED; // a,c,d,f,g,dp

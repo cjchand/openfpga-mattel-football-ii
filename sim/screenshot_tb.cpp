@@ -1,16 +1,16 @@
 // sim/screenshot_tb.cpp
 //
 // Runs the real CPU/display pipeline (pps41_core -> pps41_display_mux ->
-// pps41_display_pwm -> display_render) for a fixed number of cycles against
-// a real ROM image, then sweeps the full 320x240 active video region
-// through display_render and dumps the result as a binary PPM. This is a
+// pps41_display_pwm -> video_renderer) for a fixed number of cycles against
+// a real ROM image, then sweeps the full 400x360 active video region
+// through video_renderer and dumps the result as a binary PPM. This is a
 // debugging/verification aid (e.g. "does the score digit actually light up
 // after a kick"), not a correctness test -- see pps41_core_tb.cpp and
-// display_render_tb.cpp for those.
+// video_renderer_tb.cpp for those.
 #include "Vpps41_core.h"
 #include "Vpps41_display_mux.h"
 #include "Vpps41_display_pwm.h"
-#include "Vdisplay_render.h"
+#include "Vvideo_renderer.h"
 #include "verilated.h"
 #include <cstdio>
 #include <cstdlib>
@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "debug: distinct PCs visited=%zu (last=%03x), unimpl_ever=%d, distinct r_output=%zu, distinct d_output=%zu\n",
                  visited_pc.size(), dut->pc, unimpl_ever ? 1 : 0, r_values.size(), d_values.size());
 
-    // Raw cell dump on stderr: independent of display_render's screen
+    // Raw cell dump on stderr: independent of video_renderer's screen
     // layout/mapping, useful for checking which levels[] cells are
     // actually lit without relying on the renderer being right.
     for (int row = 0; row < 10; row++) {
@@ -110,10 +110,11 @@ int main(int argc, char** argv) {
         }
     }
 
-    Vdisplay_render* render = new Vdisplay_render;
+    Vvideo_renderer* render = new Vvideo_renderer;
     for (int w = 0; w < 7; w++) render->levels[w] = dpwm->levels[w];
+    render->bezel_enable = 1;
 
-    static const int WIDTH = 320, HEIGHT = 240;
+    static const int WIDTH = 400, HEIGHT = 360;
     std::vector<unsigned char> pixels(static_cast<size_t>(WIDTH) * HEIGHT * 3);
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {

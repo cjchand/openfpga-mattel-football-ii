@@ -497,6 +497,20 @@ core_bridge_cmd icb (
 //
 // Football II CPU / display / audio core
 //
+    // "Presentation" settings toggle (interact.json), read through the
+    // core-template's existing but previously-unused datatable mechanism
+    // (core_bridge_cmd.v's datatable, port A -- port B is driven by the
+    // host in response to bridge reads/writes at 0xF8002000). Only one
+    // flag needed (unlike FB1's 3-flag round-robin scan), so the address
+    // stays fixed at word 0.
+    assign datatable_addr = 10'd0;
+    assign datatable_wren = 1'b0;
+    assign datatable_data = 32'd0;
+    wire   bezel_enable_74a = datatable_q[0];
+
+    wire   bezel_enable;
+    synch_2 bezel_enable_sync ( bezel_enable_74a, bezel_enable, clk_core_12288, , );
+
     wire        core_ce;
     ce_gen u_ce_gen (
         .clk   ( clk_core_12288 ),
@@ -589,11 +603,12 @@ core_bridge_cmd icb (
     );
 
     wire [23:0] render_rgb_w;
-    display_render u_display_render (
-        .levels ( levels_w ),
-        .x      ( visible_x ),
-        .y      ( visible_y ),
-        .rgb    ( render_rgb_w )
+    video_renderer u_video_renderer (
+        .levels       ( levels_w ),
+        .x            ( visible_x ),
+        .y            ( visible_y ),
+        .bezel_enable ( bezel_enable ),
+        .rgb          ( render_rgb_w )
     );
 
     audio_gen u_audio_gen (
@@ -628,11 +643,11 @@ assign video_vs = vidout_vs;
 assign video_hs = vidout_hs;
 
     localparam  VID_V_BPORCH = 'd10;
-    localparam  VID_V_ACTIVE = 'd240;
-    localparam  VID_V_TOTAL = 'd512;
+    localparam  VID_V_ACTIVE = 'd360;
+    localparam  VID_V_TOTAL = 'd400;
     localparam  VID_H_BPORCH = 'd10;
-    localparam  VID_H_ACTIVE = 'd320;
-    localparam  VID_H_TOTAL = 'd400;
+    localparam  VID_H_ACTIVE = 'd400;
+    localparam  VID_H_TOTAL = 'd512;
 
     reg [15:0]  frame_count;
     
