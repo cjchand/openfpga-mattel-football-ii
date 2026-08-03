@@ -35,6 +35,40 @@
   `dist/Cores/<author>.<shortname>/` at package time; it is not shipped
   pre-built by the template. Confirmed absent from the vendored tree.
 
+## Task 3 update: root-level metadata files vendored
+
+Task 3 (packaging) needed `core.json` to determine the exact
+`<author>.<shortname>` folder name and RBF filename (Global Constraint:
+byte-for-byte match or the core fails to boot). Those files were never
+vendored by Task 2 (see above), so Task 3 fetched the same 8 root-level
+metadata files directly from the exact vendored commit/tag recorded above
+(`da3a021b1eaf742604d86d8dc9b33a6666263e6a`, tag `v1.3.0`) via
+`raw.githubusercontent.com`, and placed them under
+`dist/Cores/Developer.Core Template/` (alongside where `bitstream.rbf_r`
+is staged), rather than at the repo root — this matches the openFPGA SD
+card layout, where `core.json` and its sibling manifests live inside the
+core's own `Cores/<author>.<shortname>/` directory, not the project root.
+
+Files fetched and placed in `dist/Cores/Developer.Core Template/`:
+`core.json`, `audio.json`, `data.json`, `info.txt`, `input.json`,
+`interact.json`, `variants.json`, `video.json`.
+
+From `core.json`, the values that determine the SD-card folder/filename:
+- `metadata.author` = `"Developer"`
+- `metadata.shortname` = `"Core Template"`
+- folder name = `Developer.Core Template` (note: contains a literal
+  space — copied verbatim from `shortname`, per the exact-match
+  constraint; do not "clean up" this space)
+- `cores[0].filename` = `"bitstream.rbf_r"` — this is the RBF_R
+  destination filename inside that folder.
+
+These are still the upstream template's placeholder identity (author
+"Developer", shortname "Core Template") — a later task should update
+`core.json`'s `metadata.author`/`metadata.shortname` to the real project
+identity once one is chosen, and the `Makefile`'s `RBF_R_DEST` and the
+`dist/Cores/...` directory name must be renamed to match, in lockstep,
+or the core will fail to boot.
+
 Do not upgrade Quartus device settings in the .qsf — preconfigured for the
 Pocket's Cyclone V.
 

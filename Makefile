@@ -6,6 +6,9 @@
 QUARTUS_IMAGE ?= didiermalenfant/quartus:22.1-apple-silicon
 QPF           ?= ap_core.qpf
 
+RBF        ?= src/fpga/output_files/ap_core.rbf
+RBF_R_DEST ?= dist/Cores/Developer.Core Template/bitstream.rbf_r
+
 .PHONY: sim bitstream package clean
 
 sim:
@@ -17,7 +20,9 @@ bitstream:
 		$(QUARTUS_IMAGE) quartus_sh --flow compile $(QPF)
 
 package:
-	@echo "package target not yet implemented (Task 3)"
+	python3 tools/reverse_rbf.py "$(RBF)" "$(RBF_R_DEST)"
+	@echo "Staged: $(RBF_R_DEST)"
+	@echo "Copy the contents of dist/ onto the Pocket SD card root."
 
 clean:
 	$(MAKE) -C sim clean
