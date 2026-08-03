@@ -1,0 +1,6 @@
+Mattel Football II
+
+Mattel Electronic Football II (1978) for the Analogue Pocket.
+
+Controls: D-pad moves. Face buttons: top = Score, bottom = Kick,
+left = Status, right = Pass (Select/Start also work for Status/Score).
