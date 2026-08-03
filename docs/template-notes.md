@@ -100,3 +100,30 @@ detour was needed.
   not a malfunction. The successful boot confirms end-to-end toolchain
   viability: Docker Quartus compilation, RBF-to-RBF_R reversal, correct
   SD-card folder naming, and Pocket hardware loading all functional.
+
+## Phase 5: branding rename and button remap build verification (2026-08-03)
+
+- **Rename (Task 1, already merged):** `dist/Cores/Developer.Core Template`
+  -> `dist/Cores/cjchand.Mattel Football II`; `dist/platforms/ex_platform.json`
+  -> `dist/platforms/mattel_football_ii.json`; `Makefile`'s `RBF_R_DEST`
+  updated in lockstep to `dist/Cores/cjchand.Mattel Football II/bitstream.rbf_r`.
+- **Button remap (Task 2, already merged):** `src/fpga/core/core_top.v`'s
+  `p_input_w` default face-button mapping rewired to Score=top face button,
+  Kick=bottom, Status=left, Pass=right, plus D-pad; Select/Start still work
+  as alternates for Status/Score.
+- **`make sim` (Verilator/golden-model test suite):** all 50 test vectors
+  PASS, 0 mismatches, exit code 0. The remap only changes which `cont1_key`
+  bit feeds which `p_input` bit at the `core_top.v` level; the testbench
+  drives `p_input` directly and was unaffected, as expected.
+- **`make bitstream` (Quartus compile in Docker):** 0 errors, 200 warnings
+  total (Analysis & Synthesis 167, Fitter 16, Assembler 2, Timing Analyzer
+  15). This matches the last known-good baseline (0 errors, 200 warnings,
+  recorded above and in `.superpowers/sdd/2026-08-03-apf-integration/progress.md`
+  Task 8) exactly, both in total count and in the set of warning ID
+  categories observed. No new warning category was introduced by the
+  `core_top.v` remap.
+- **`make package`:** succeeded; `bitstream.rbf_r` regenerated (1,052,284
+  bytes) at `dist/Cores/cjchand.Mattel Football II/bitstream.rbf_r`. `ls`
+  of that folder confirms all expected manifest files present alongside
+  it: `core.json`, `audio.json`, `data.json`, `info.txt`, `input.json`,
+  `interact.json`, `variants.json`, `video.json`.
