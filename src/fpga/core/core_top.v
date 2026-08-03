@@ -499,7 +499,7 @@ core_bridge_cmd icb (
 //
     wire        core_ce;
     ce_gen u_ce_gen (
-        .clk   ( clk_74a ),
+        .clk   ( clk_core_12288 ),
         .rst_n ( reset_n ),
         .ce    ( core_ce )
     );
@@ -532,7 +532,7 @@ core_bridge_cmd icb (
     wire [11:0] d_output_w;
     wire [1:0]  spk_level_w;
     pps41_core u_pps41_core (
-        .clk               ( clk_74a ),
+        .clk               ( clk_core_12288 ),
         .rst_n             ( reset_n ),
         .ce                ( core_ce ),
         .rom_addr          ( rom_addr_w ),
@@ -577,7 +577,7 @@ core_bridge_cmd icb (
 
     wire [219:0] levels_w;
     pps41_display_pwm u_display_pwm (
-        .clk         ( clk_74a ),
+        .clk         ( clk_core_12288 ),
         .rst_n       ( reset_n ),
         .ce          ( core_ce ),
         .rowsel      ( rowsel_w ),
