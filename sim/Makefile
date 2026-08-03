@@ -4,7 +4,7 @@ CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
 .PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test display-vectors-long-test test clean
-.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test display-render-test screenshot
+.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test display-render-test screenshot startup-state-test
 
 lint-core:
 	$(VERILATOR) --lint-only -Wall --Wno-UNUSEDSIGNAL -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v
@@ -103,6 +103,23 @@ screenshot:
 		-LDFLAGS "../obj_dir_core_dmux/Vpps41_display_mux__ALL.a ../obj_dir_core_dpwm/Vpps41_display_pwm__ALL.a ../obj_dir_core_render/Vdisplay_render__ALL.a"
 	$(MAKE) -C obj_dir_screenshot -f Vpps41_core.mk
 	./obj_dir_screenshot/Vpps41_core "$(ROM)" "$(CYCLES)" "$(OUT)" $(STIM)
+
+# Regression check for the real, MAME-confirmed startup display state
+# (see startup_state_tb.cpp). Requires the user-supplied ROM, same as
+# `screenshot` -- not part of the default `test` target since CI/other
+# clones won't have it.
+startup-state-test:
+	$(VERILATOR) --cc ../src/pps41_display_mux.v --Mdir obj_dir_core_dmux -Wall --Wno-UNUSEDSIGNAL
+	$(MAKE) -C obj_dir_core_dmux -f Vpps41_display_mux.mk Vpps41_display_mux__ALL.a
+	$(VERILATOR) --cc ../src/pps41_display_pwm.v --Mdir obj_dir_core_dpwm -Wall --Wno-UNUSEDSIGNAL
+	$(MAKE) -C obj_dir_core_dpwm -f Vpps41_display_pwm.mk Vpps41_display_pwm__ALL.a
+	$(VERILATOR) --cc -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v \
+		--exe startup_state_tb.cpp \
+		--Mdir obj_dir_startup_state -Wall --Wno-UNUSEDSIGNAL -Wno-WIDTH \
+		-CFLAGS "-I.. -I../obj_dir_core_dmux -I../obj_dir_core_dpwm" \
+		-LDFLAGS "../obj_dir_core_dmux/Vpps41_display_mux__ALL.a ../obj_dir_core_dpwm/Vpps41_display_pwm__ALL.a"
+	$(MAKE) -C obj_dir_startup_state -f Vpps41_core.mk
+	./obj_dir_startup_state/Vpps41_core "$(ROM)"
 
 golden-test:
 	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/mm77la_display_mux.cpp golden/mm77la_display_pwm.cpp golden/mm77la_model_test.cpp -o /tmp/mm77la_model_test
