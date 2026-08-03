@@ -68,7 +68,7 @@ static void test_bright_brighter_than_dim() {
     int cx = MARGIN_X + CELL_W/2, cy = MARGIN_Y + CELL_H/2;
     bright.x = cx; bright.y = cy; bright.eval();
     dim.x = cx; dim.y = cy; dim.eval();
-    CHECK((bright.rgb & 0xFF) > (dim.rgb & 0xFF), "level 2 (bright) has a higher blue-channel/luma value than level 1 (dim)");
+    CHECK(((bright.rgb >> 16) & 0xFF) > ((dim.rgb >> 16) & 0xFF), "level 2 (bright) has a higher red-channel value than level 1 (dim)");
 }
 
 static void test_row_9_col_10_last_cell_reachable() {

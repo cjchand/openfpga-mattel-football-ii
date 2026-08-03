@@ -42,6 +42,6 @@ module display_render (
     // by pps41_display_pwm but treated the same as bright, defensively).
     assign rgb = !lit_area          ? 24'h000000
                : (cell_level == 0)  ? 24'h000000
-               : (cell_level == 1)  ? 24'h552211
-               :                      24'hFF8822;
+               : (cell_level == 1)  ? 24'h552200
+               :                      24'hFF8800;
 endmodule
