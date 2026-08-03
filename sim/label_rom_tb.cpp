@@ -30,14 +30,51 @@ int main(int argc, char** argv) {
     uint32_t bg2 = sample(d, 2, 17);
     CHECK(bg2 == 0xFFFFFF, "bar2 far-left background is white");
 
-    // Row 8 of bar 1 (mid-height) must contain at least one non-white
-    // pixel somewhere across the full width -- proves the ROM holds real
-    // text content, not a solid fill.
-    bool row_has_text = false;
-    for (int px = 0; px < 400; px++) {
-        if (sample(d, px, 8) != 0xFFFFFF) { row_has_text = true; break; }
+    // Every word must land inside its own digit window. The window
+    // x-ranges match video_renderer.v's digit-window boxes. Checking all
+    // three windows in both bars (6 checks) is what catches a word being
+    // rendered off-canvas or into the wrong window -- a single
+    // "somewhere in this row there is ink" check does not.
+    struct Window { int x0, x1; const char* name; };
+    const Window windows[3] = {
+        {12, 92, "window1"}, {140, 260, "window2"}, {308, 388, "window3"},
+    };
+    const int bar_rows[2] = {8, 24}; // mid-height row of bar1 / bar2
+    const char* bar_names[2] = {"bar1", "bar2"};
+
+    for (int b = 0; b < 2; b++) {
+        for (int w = 0; w < 3; w++) {
+            bool has_text = false;
+            // Scan the whole band, not one row: glyph ink does not cover
+            // every row of a 16px bar.
+            for (int by = bar_rows[b] - 8; by < bar_rows[b] + 8 && !has_text; by++) {
+                for (int px = windows[w].x0; px < windows[w].x1; px++) {
+                    if (sample(d, px, by) != 0xFFFFFF) { has_text = true; break; }
+                }
+            }
+            char msg[128];
+            std::snprintf(msg, sizeof(msg),
+                          "%s %s (x%d-%d) contains label text (non-background pixels)",
+                          bar_names[b], windows[w].name, windows[w].x0, windows[w].x1 - 1);
+            CHECK(has_text, msg);
+        }
     }
-    CHECK(row_has_text, "bar1 row 8 contains at least one non-background pixel (label text)");
+
+    // The gaps between windows must stay clean background -- proves no
+    // word overflows its window into a neighbouring one.
+    const int gap_xs[2] = {120, 290};
+    for (int b = 0; b < 2; b++) {
+        for (int g = 0; g < 2; g++) {
+            bool gap_clean = true;
+            for (int by = bar_rows[b] - 8; by < bar_rows[b] + 8; by++) {
+                if (sample(d, gap_xs[g], by) != 0xFFFFFF) { gap_clean = false; break; }
+            }
+            char msg[128];
+            std::snprintf(msg, sizeof(msg), "%s inter-window gap at x=%d is white background",
+                          bar_names[b], gap_xs[g]);
+            CHECK(gap_clean, msg);
+        }
+    }
 
     if (g_failures) { std::printf("FAILED: %d check(s)\n", g_failures); return 1; }
     std::printf("PASS: label_rom_tb\n");

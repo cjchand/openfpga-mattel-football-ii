@@ -76,8 +76,8 @@ static void test_field_lamp_slot0_top_lights_when_level_2() {
     Vvideo_renderer d;
     clear(d);
     set_cell(d, 8, 8, 2); // field screen slot 0 -> row 8, top lamp
-    d.x = 25 + (35-20)/2 + 20/2; // FIELD_X0=25, COL_PITCH=35, LAMP_W=20
-    d.y = 90 + 10/2;             // STRIP_Y0=90, LAMP_H=10
+    d.x = 25 + (35-20)/2 + 20/2;  // FIELD_X0=25, COL_PITCH=35, LAMP_W=20
+    d.y = 90 + 8 + 28/2;          // STRIP_Y0=90, LAMP_Y_OFF=8, LAMP_H=28
     d.eval();
     CHECK(d.rgb != 0, "field lamp (slot 0 -> row 8, top) lights up when its cell is level 2");
 }
@@ -86,9 +86,9 @@ static void test_field_lamp_slot9_bottom_last_position_reachable() {
     Vvideo_renderer d;
     clear(d);
     set_cell(d, 7, 10, 2); // field screen slot 9 -> row 7 (field_row(9)), bottom lamp -> col 10
-    // FIELD_X0=25, COL_PITCH=35, LAMP_W=20, STRIP_Y0=90, ROW_PITCH=12, LAMP_H=10
+    // FIELD_X0=25, COL_PITCH=35, LAMP_W=20, STRIP_Y0=90, LAMP_Y_OFF=8, ROW_PITCH=60, LAMP_H=28
     int cx = 25 + 9 * 35 + (35 - 20) / 2 + 20 / 2;
-    int cy = 90 + 2 * 12 + 10 / 2;
+    int cy = 90 + 8 + 2 * 60 + 28 / 2;
     d.x = cx; d.y = cy;
     d.eval();
     CHECK(d.rgb != 0, "last field lamp (slot 9 -> row 7, bottom) is independently addressable and lights up");
@@ -106,9 +106,26 @@ static void test_bezel_disabled_is_plain_black() {
 static void test_bezel_enabled_shows_label_bar_background() {
     Vvideo_renderer d;
     clear(d);
-    d.x = 300; d.y = 5; // bar 1, far right, well clear of any label text
+    // x=120 is the gap between digit window 1 (x12-91) and window 2
+    // (x140-259), so no label text belongs here. (x=300 would NOT work:
+    // it is close enough to window 3 (x308-387, "YARDS TO GO") that
+    // asserting white there would be asserting text is absent where text
+    // is legitimately drawn.)
+    d.x = 120; d.y = 5;
     d.eval();
     CHECK(d.rgb == 0xFFFFFF, "label bar background is white when bezel_enable=1");
+}
+
+static void test_field_strip_extends_below_the_lamp_rows() {
+    // The strip is 180px tall (STRIP_Y0=90 .. y269 plus border), so a
+    // point well below the last lamp row (y218-245) is still field art,
+    // not the green margin -- this is what keeps the lower canvas from
+    // being a large empty green band.
+    Vvideo_renderer d;
+    clear(d);
+    d.x = 30; d.y = 260; // inside field cell 0, below all three lamp rows
+    d.eval();
+    CHECK(d.rgb != 0x12CA7D, "field strip still covers y=260 rather than falling back to green margin");
 }
 
 static void test_bezel_enabled_shows_green_margin() {
@@ -129,6 +146,7 @@ int main(int argc, char** argv) {
     run_test("field_lamp_slot9_bottom_last_position_reachable", test_field_lamp_slot9_bottom_last_position_reachable);
     run_test("bezel_disabled_is_plain_black", test_bezel_disabled_is_plain_black);
     run_test("bezel_enabled_shows_label_bar_background", test_bezel_enabled_shows_label_bar_background);
+    run_test("field_strip_extends_below_the_lamp_rows", test_field_strip_extends_below_the_lamp_rows);
     run_test("bezel_enabled_shows_green_margin", test_bezel_enabled_shows_green_margin);
     if (g_failures) { std::printf("FAILED: %d check(s)\n", g_failures); return 1; }
     std::printf("PASS: video_renderer_tb\n");

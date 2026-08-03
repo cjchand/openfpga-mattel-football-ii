@@ -506,6 +506,11 @@ core_bridge_cmd icb (
     assign datatable_addr = 10'd0;
     assign datatable_wren = 1'b0;
     assign datatable_data = 32'd0;
+    // Expected: this reads 0 (bezel off) from power-on until the APF host
+    // performs its first datatable write reflecting interact.json's
+    // defaultval:1 -- the datatable powers up zeroed and only the host
+    // knows the setting. Not a bug; the sibling FB1 project's equivalent
+    // "Overlay" toggle uses the same mechanism and works on real hardware.
     wire   bezel_enable_74a = datatable_q[0];
 
     wire   bezel_enable;

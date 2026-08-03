@@ -74,7 +74,13 @@ module video_renderer (
     endfunction
 
     localparam FIELD_X0 = 25, COL_PITCH = 35;
-    localparam STRIP_Y0 = 90, ROW_PITCH = 12, LAMP_W = 20, LAMP_H = 10;
+    // STRIP_H must match gen_bezel_bitmaps.py's STRIP_Y1 - STRIP_Y0.
+    // The three lamp rows are spread across the whole strip (rows at
+    // strip-relative y8-35, y68-95, y128-155) so the strip does not read
+    // as three lamps crowded at the top over an empty black field.
+    localparam STRIP_Y0 = 90, STRIP_H = 180;
+    localparam LAMP_Y_OFF = 8, ROW_PITCH = 60, LAMP_W = 20, LAMP_H = 28;
+    localparam LAMP_Y0 = STRIP_Y0 + LAMP_Y_OFF;
     localparam BORDER_W = 4;
 
     function [23:0] level_color(input [1:0] lvl);
@@ -123,7 +129,7 @@ module video_renderer (
                 rgb = C_BG;
             else
                 rgb = C_WHITE;
-        end else if (y >= (STRIP_Y0 - BORDER_W) && y < (STRIP_Y0 + 9'd108 + BORDER_W)) begin
+        end else if (y >= (STRIP_Y0 - BORDER_W) && y < (STRIP_Y0 + STRIP_H + BORDER_W)) begin
             rgb = field_rgb; // field strip (border + 10-column art)
         end else begin
             rgb = C_GREEN; // green margin above/below the field strip
@@ -157,15 +163,15 @@ module video_renderer (
         for (fcol = 0; fcol < 10; fcol = fcol + 1) begin
             rx0 = FIELD_X0 + fcol * COL_PITCH + (COL_PITCH - LAMP_W) / 2;
             if (x >= rx0 && x < rx0 + LAMP_W) begin
-                if (y >= STRIP_Y0 && y < STRIP_Y0 + LAMP_H) begin
+                if (y >= LAMP_Y0 && y < LAMP_Y0 + LAMP_H) begin
                     cell_idx = field_row(fcol[3:0]) * 11 + 8; // top lamp
                     lvl = levels[cell_idx*2 +: 2];
                     rgb = level_color(lvl);
-                end else if (y >= STRIP_Y0 + ROW_PITCH && y < STRIP_Y0 + ROW_PITCH + LAMP_H) begin
+                end else if (y >= LAMP_Y0 + ROW_PITCH && y < LAMP_Y0 + ROW_PITCH + LAMP_H) begin
                     cell_idx = field_row(fcol[3:0]) * 11 + 9; // mid lamp
                     lvl = levels[cell_idx*2 +: 2];
                     rgb = level_color(lvl);
-                end else if (y >= STRIP_Y0 + 2*ROW_PITCH && y < STRIP_Y0 + 2*ROW_PITCH + LAMP_H) begin
+                end else if (y >= LAMP_Y0 + 2*ROW_PITCH && y < LAMP_Y0 + 2*ROW_PITCH + LAMP_H) begin
                     cell_idx = field_row(fcol[3:0]) * 11 + 10; // bottom lamp
                     lvl = levels[cell_idx*2 +: 2];
                     rgb = level_color(lvl);

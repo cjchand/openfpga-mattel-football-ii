@@ -45,7 +45,9 @@ FONT_SIZE = 40
 # Digit-window group centers (must match video_renderer.v's digit_x()
 # window groupings: window1 = digit_x(0..1), window2 = digit_x(2..4),
 # window3 = digit_x(5..6)). See Task 2's geometry table.
+# window1 = x[12,92), window2 = x[140,260), window3 = x[308,388).
 LABEL_COL_TARGET_CENTERS = [52, 200, 348]
+LABEL_COL_WINDOW_W = [80, 120, 80]
 BAR1_WORDS = ["DOWN", "FIELD POSITION", "YARDS TO GO"]
 BAR2_WORDS = ["HOME", "TIME REMAINING", "VISITORS"]
 
@@ -58,9 +60,14 @@ def load_font():
 
 
 def render_bar(words, font):
-    bar = Image.new("RGB", (WIDTH, BAR_SRC_H), BAR_BG_RGB)
+    # Render at `scale` times the final size on BOTH axes, then downscale
+    # both together. Scaling only the height (and still multiplying the x
+    # centers by `scale`) would push words off the right edge of the
+    # canvas and squash the surviving glyphs vertically.
+    scale = BAR_SRC_H // BAR_OUT_H
+    src_w = WIDTH * scale
+    bar = Image.new("RGB", (src_w, BAR_SRC_H), BAR_BG_RGB)
     draw = ImageDraw.Draw(bar)
-    scale = BAR_SRC_H / BAR_OUT_H
     for word, out_center_x in zip(words, LABEL_COL_TARGET_CENTERS):
         bbox = draw.textbbox((0, 0), word, font=font)
         w = bbox[2] - bbox[0]
@@ -72,8 +79,25 @@ def render_bar(words, font):
     return bar.resize((WIDTH, BAR_OUT_H), Image.LANCZOS)
 
 
+def check_word_fits(draw, word, font, window_w, scale):
+    """FONT_SIZE is sized so every word fits inside its digit window at
+    final scale; assert it rather than silently letting a word bleed into
+    the neighbouring window."""
+    bbox = draw.textbbox((0, 0), word, font=font)
+    final_w = (bbox[2] - bbox[0]) / scale
+    if final_w > window_w * 0.95:
+        raise SystemExit(
+            f"{word!r} renders {final_w:.1f}px wide at final scale, which "
+            f"exceeds 95% of its {window_w}px window -- lower FONT_SIZE"
+        )
+
+
 def build_label_image():
     font = load_font()
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    for words in (BAR1_WORDS, BAR2_WORDS):
+        for word, window_w in zip(words, LABEL_COL_WINDOW_W):
+            check_word_fits(probe, word, font, window_w, BAR_SRC_H // BAR_OUT_H)
     bar1 = render_bar(BAR1_WORDS, font)
     bar2 = render_bar(BAR2_WORDS, font)
     combined = Image.new("RGB", (WIDTH, BAR_OUT_H * 2))
@@ -91,7 +115,11 @@ BLACK_RGB = (0, 0, 0)          # field cell fill
 DIVIDER_RGB = (230, 230, 230)  # column dividers / hash ticks / border
 
 FIELD_W = 400
-STRIP_Y0, STRIP_Y1 = 8, 116  # exclusive end; 108px tall strip
+# Strip height (STRIP_Y1 - STRIP_Y0) must match video_renderer.v's
+# STRIP_H. It is tall enough for the three lamp rows to be spread across
+# it (rather than crammed into its top third) and to fill most of the
+# 360-row canvas below the scoreboard, leaving only a modest green margin.
+STRIP_Y0, STRIP_Y1 = 8, 188  # exclusive end; 180px tall strip
 MARGIN_X = 6      # green shows on both outer edges
 EZ_W = 19         # endzone width
 FIELD_X0 = MARGIN_X + EZ_W  # 25: where the 10-column field region starts
@@ -99,7 +127,12 @@ COL_PITCH = 35    # 33px cell + 2px divider, x10 columns = 350px
 DIV_W = 2
 BORDER_W = 4
 BORDER_RGB = DIVIDER_RGB
-HASH_Y = STRIP_Y0 + (STRIP_Y1 - STRIP_Y0) // 2  # single hash-tick row, vertical center
+# Single hash-tick row at the strip's vertical center. With the strip at
+# 180px and video_renderer.v's LAMP_Y_OFF=8 / ROW_PITCH=60 / LAMP_H=28,
+# the lamp rows occupy strip-relative y8-35, y68-95 and y128-155, so this
+# center tick (strip-relative y90) lands among them rather than below
+# all three.
+HASH_Y = STRIP_Y0 + (STRIP_Y1 - STRIP_Y0) // 2
 HASH_H = 2
 HASH_REACH = 4
 

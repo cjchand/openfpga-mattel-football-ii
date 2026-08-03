@@ -36,6 +36,14 @@ int main(int argc, char** argv) {
     uint32_t cell = sample(d, 30, 60);
     CHECK(cell < 0x202020, "field cell is near-black");
 
+    // The strip is 180px tall (plus 4px border top/bottom), so field_y
+    // near the bottom of the bitmap is still field art, not out of
+    // range: x=30 stays inside cell 0 all the way down.
+    uint32_t deep_cell = sample(d, 30, 170);
+    CHECK(deep_cell < 0x202020, "field cell is still near-black near the bottom of the 180px strip");
+    uint32_t deep_endzone = sample(d, 12, 170);
+    CHECK((deep_endzone & 0xFF) > 150, "endzone runs the full height of the 180px strip");
+
     if (g_failures) { std::printf("FAILED: %d check(s)\n", g_failures); return 1; }
     std::printf("PASS: field_rom_tb\n");
     return 0;
