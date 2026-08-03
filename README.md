@@ -41,6 +41,15 @@ simple AI) football game played entirely on a 7-digit seven-segment +
 Pass to throw, and use Score/Status to check the scoreboard and
 down-and-distance.
 
+The core renders the original LED segments/lamps over a bitmap
+scoreboard-and-field bezel (label bars, digit windows, and a 10-column
+field strip with endzones) that approximates the real handheld's plastic
+overlay. This is purely cosmetic — the underlying LED state is unchanged.
+A **Presentation** toggle in the core's settings menu (on by default) lets
+you switch it off, which falls back to the plain black background used
+before the bezel was added; the LED digits and field lamps keep working
+identically either way.
+
 ## Credits
 
 All ISA/architecture facts in `docs/initial-plan.md` are transcribed from

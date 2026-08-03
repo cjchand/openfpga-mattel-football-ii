@@ -127,3 +127,53 @@ detour was needed.
   of that folder confirms all expected manifest files present alongside
   it: `core.json`, `audio.json`, `data.json`, `info.txt`, `input.json`,
   `interact.json`, `variants.json`, `video.json`.
+
+## Bezel/field overlay bring-up (2026-08-03)
+
+- **Canvas:** grew the active video region from the original LED-only
+  frame to 400x360, reusing FB1's already-proven 400x360/60Hz timing
+  budget (same pixel clock and blanking intervals as the sibling
+  Football I project) rather than deriving a new one from scratch — the
+  goal was a bitmap-friendly canvas large enough for label bars, digit
+  windows, and a 10-column field strip, without risking a new timing
+  regression.
+- **Layering:** `src/video_renderer.v` composites, back-to-front: plain
+  black background -> green field margin -> field strip bitmap
+  (`field_rom.v`, 10 columns + endzones + borders, `$readmemh`-loaded
+  from `field_bitmap.mem`/`field_palette.mem`) -> label-bar bitmap
+  (`label_rom.v`, `label_bitmap.mem`/`label_palette.mem`) -> the
+  original procedural 7-segment digits and field lamps (unchanged from
+  Phase 5's `display_render.v` logic, now inlined into
+  `video_renderer.v`), which are drawn unconditionally on top regardless
+  of what's under them. Bitmaps were generated from a photo of the real
+  device by `tools/gen_bezel_bitmaps.py`.
+- **`Presentation` toggle:** wired as `interact.json`'s `"Presentation"`
+  checkbox variable (id 1, default on), read into `core_top.v` through
+  the standard datatable/`synch_2` path as `bezel_enable`, and passed
+  into `video_renderer`. Only the *background* layer selection depends
+  on `bezel_enable` (`!bezel_enable` forces plain black); the digit
+  segments and field lamps are drawn unconditionally either way, so
+  toggling Presentation off reproduces the pre-bezel plain-black display
+  with LEDs/lamps unaffected.
+- **Verification performed (simulation only):** `make screenshot` against
+  the real ROM (`b8000-12.bin`), holding Score from ~1 video frame after
+  reset (stimulus `6333 01`, not cycle 0, to let startup settle first),
+  produced a 400x360 PPM. Programmatic pixel sampling (PIL, no human
+  eyeball) confirmed: label-bar background is white (`0xFFFFFF`) with
+  colored label-bitmap content, digit-window gaps are white with black
+  corner accents, the field strip shows green margins (`0x12CA7D`),
+  cyan endzones, black column dividers, and light-gray divider lines,
+  and lit digit segments render at the exact `C_DIM`/`C_BRIGHT` levels
+  (`0x552200`/`0xFF8800`) driven by `levels[]`. `make startup-state-test`
+  still passes unchanged (`Home 00 / Time 15.0 / Visitor 00`), confirming
+  the CPU/display-pipeline wiring itself was untouched by the rendering
+  work.
+- **Real-hardware confirmation:** still **BLOCKED-on-human** as of this
+  writing (see Task 3's report under
+  `.superpowers/sdd/2026-08-03-bezel-field-overlay/task-3-report.md`,
+  Step 10) — no agent has physical access to a real Analogue Pocket to
+  boot the packaged bitstream and visually confirm the bezel on real
+  hardware, or confirm the Presentation-off fallback there. Simulation
+  results above are the only verification performed to date; this
+  should be closed out by a human with hardware access before treating
+  the feature as fully signed off.
