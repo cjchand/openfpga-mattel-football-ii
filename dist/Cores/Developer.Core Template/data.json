@@ -1,6 +1,15 @@
 {
     "data": {
         "magic": "APF_VER_1",
-        "data_slots": []
+        "data_slots": [
+            {
+                "id": 0,
+                "name": "ROM",
+                "required": true,
+                "parameters": "0x0",
+                "filename": "b8000-12.bin",
+                "address": "0x10000000"
+            }
+        ]
     }
 }
