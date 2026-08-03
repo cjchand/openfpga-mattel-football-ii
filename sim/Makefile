@@ -4,7 +4,7 @@ CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
 .PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test test clean
-.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test
+.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test
 
 lint-core:
 	$(VERILATOR) --lint-only -Wall --Wno-UNUSEDSIGNAL -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v
@@ -33,6 +33,10 @@ tone-rtl-test:
 io-test:
 	$(CXX) $(CXXFLAGS) golden/mm77la_io.cpp golden/mm77la_io_test.cpp -o /tmp/mm77la_io_test
 	/tmp/mm77la_io_test
+
+display-mux-test:
+	$(CXX) $(CXXFLAGS) golden/mm77la_display_mux.cpp golden/mm77la_display_mux_test.cpp -o /tmp/mm77la_display_mux_test
+	/tmp/mm77la_display_mux_test
 
 io-rtl-test:
 	$(VERILATOR) --cc ../src/pps41_io.v --exe pps41_io_tb.cpp \
@@ -87,7 +91,7 @@ vectors-test: core-test
 	done; \
 	echo "vectors-test: all vectors PASS"
 
-test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test
+test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test io-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test
 
 clean:
-	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test
+	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test /tmp/mm77la_display_mux_test
