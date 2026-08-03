@@ -101,7 +101,7 @@ vectors-test: core-test
 	done; \
 	echo "vectors-test: all vectors PASS"
 
-test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test
+test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test
 
 clean:
 	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test /tmp/mm77la_display_mux_test /tmp/mm77la_display_mux_rtl_test /tmp/mm77la_display_pwm_test
