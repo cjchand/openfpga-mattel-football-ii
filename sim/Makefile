@@ -4,7 +4,7 @@ CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
 .PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test test clean
-.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test
+.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test
 
 lint-core:
 	$(VERILATOR) --lint-only -Wall --Wno-UNUSEDSIGNAL -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v
@@ -54,6 +54,12 @@ display-mux-rtl-test:
 	$(MAKE) -C obj_dir_display_mux -f Vpps41_display_mux.mk
 	./obj_dir_display_mux/Vpps41_display_mux
 
+display-pwm-rtl-test:
+	$(VERILATOR) --cc ../src/pps41_display_pwm.v --exe pps41_display_pwm_tb.cpp \
+		--Mdir obj_dir_display_pwm -Wall --Wno-UNUSEDSIGNAL
+	$(MAKE) -C obj_dir_display_pwm -f Vpps41_display_pwm.mk
+	./obj_dir_display_pwm/Vpps41_display_pwm
+
 golden-test:
 	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/mm77la_model_test.cpp -o /tmp/mm77la_model_test
 	/tmp/mm77la_model_test
@@ -101,7 +107,7 @@ vectors-test: core-test
 	done; \
 	echo "vectors-test: all vectors PASS"
 
-test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test
+test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test
 
 clean:
 	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test /tmp/mm77la_display_mux_test /tmp/mm77la_display_mux_rtl_test /tmp/mm77la_display_pwm_test
