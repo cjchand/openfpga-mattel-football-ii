@@ -84,7 +84,7 @@ detour was needed.
 - **Bitstream tested:** `dist/Cores/Developer.Core Template/bitstream.rbf_r`
   (786,964 bytes, reversed RBF produced by `make package` in Task 3, sourced
   from `src/fpga/output_files/ap_core.rbf` compiled in Task 2).
-- **Hardware:** Analogue Pocket running firmware 2.5.
+- **Hardware:** Analogue Pocket running firmware 2.6.
 - **Test procedure:** The packaged bitstream was placed on SD card at the
   correct folder path (`/Cores/Developer.Core Template/bitstream.rbf_r`,
   matching the `Developer.Core Template` folder name from `core.json`) and
