@@ -42,7 +42,6 @@ void Mm77laModel::reset() {
     ram_.fill(0xF);
     tone_reset(st_.tone);
     io_reset(st_.io);
-    st_.display = DisplayPwmState{};
 }
 
 uint8_t Mm77laModel::rom_read(uint16_t addr) const {

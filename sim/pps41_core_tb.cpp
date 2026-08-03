@@ -3,6 +3,7 @@
 #include "Vpps41_core___024root.h"
 #include "Vpps41_display_mux.h"
 #include "Vpps41_display_pwm.h"
+#include "Vpps41_display_pwm___024root.h"
 #include "verilated.h"
 #include "golden/mm77la_model.h"
 #include <cstdio>
@@ -67,6 +68,9 @@ int main(int argc, char** argv) {
     Vpps41_display_mux* dmux = new Vpps41_display_mux;
     Vpps41_display_pwm* dpwm = new Vpps41_display_pwm;
     dpwm->rst_n = 0; dpwm->rowsel = 0; dpwm->rowdata = 0;
+    dpwm->clk = 0; dpwm->eval();
+    dpwm->clk = 1; dpwm->eval();  // actually clock the reset, don't rely on Verilator's zero-init
+    dpwm->rst_n = 1;
 
     long ix_hit_count = 0;
     bool int1l_ever_hit = false;
@@ -89,7 +93,6 @@ int main(int argc, char** argv) {
         dmux->eval();
         dpwm->rowsel = dmux->rowsel;
         dpwm->rowdata = dmux->rowdata;
-        dpwm->rst_n = 1;
         dpwm->clk = 0; dpwm->eval();
         dpwm->clk = 1; dpwm->eval();
 
@@ -129,13 +132,32 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Settled per-window levels are diffed, not raw counters -- the RTL
-        // module doesn't expose its internal cnt[] array.
+        // Settled per-window levels, diffed every cycle (cheap: these only
+        // change at window boundaries, but diffing every cycle catches a
+        // stale/incorrectly-timed update just as well as a wrong value).
         for (int cell = 0; cell < 110; cell++) {
             int rtl_level = (dpwm->levels[(cell * 2) / 32] >> ((cell * 2) % 32)) & 3;
             int golden_level = g.display.levels[cell];
             if (rtl_level != golden_level) {
                 std::printf("cycle %ld: display cell %d level mismatch rtl=%d golden=%d\n", i, cell, rtl_level, golden_level);
+                mismatch = true;
+            }
+        }
+
+        // Per-cell accumulator state, diffed every cycle too -- not just
+        // the settled snapshot above. This is the "don't just check the
+        // final answer" discipline Phase 1's RAM-comparison fix
+        // established: the settled `levels` diff above is 0==0 for every
+        // cell across an entire idle run where nothing ever lights up, so
+        // it alone provides no verification signal for the accumulator's
+        // internal correctness (this is exactly the gap that let the
+        // window-boundary off-by-one bug go undetected -- see
+        // pps41_display_pwm.v's WIN_LAST classification fix).
+        for (int cell = 0; cell < 110 && !mismatch; cell++) {
+            uint16_t rtl_cnt = dpwm->rootp->pps41_display_pwm__DOT__cnt[cell];
+            uint16_t golden_cnt = g.display.cnt[cell];
+            if (rtl_cnt != golden_cnt) {
+                std::printf("cycle %ld: display cell %d cnt mismatch rtl=%d golden=%d\n", i, cell, rtl_cnt, golden_cnt);
                 mismatch = true;
             }
         }

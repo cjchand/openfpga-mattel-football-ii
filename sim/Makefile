@@ -3,7 +3,7 @@ VERILATOR := verilator
 CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
-.PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test test clean
+.PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test display-vectors-long-test test clean
 .PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test
 
 lint-core:
@@ -123,7 +123,26 @@ vectors-test: core-test
 	done; \
 	echo "vectors-test: all vectors PASS"
 
-test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test
+# Every other vector above runs only 30 cycles -- far short of one
+# pps41_display_pwm WINDOW (1583 cycles), so none of them ever exercise a
+# settled (post-boundary) display level, let alone the window-boundary
+# cycle itself. display_dp_via_d11.bin and display_multi_row_select.bin
+# exist specifically to exercise the display pipeline, so run them for at
+# least 2*WINDOW (3166) cycles here -- long enough to cross two window
+# boundaries -- as part of the normal, repeatable test flow instead of
+# requiring a human to remember to invoke Vpps41_core by hand with a
+# different cycle count.
+display-vectors-long-test: core-test
+	@set -e; \
+	for v in vectors/display_*.bin; do \
+		echo "-- $$v (3200 cycles) --"; \
+		out=$$(./obj_dir_core/Vpps41_core "$$v" 3200) || { echo "$$out"; echo "FAIL: $$v (nonzero exit)"; exit 1; }; \
+		echo "$$out"; \
+		case "$$out" in *PASS*) ;; *) echo "FAIL: $$v (no PASS in output)"; exit 1;; esac; \
+	done; \
+	echo "display-vectors-long-test: all display vectors PASS at 3200 cycles"
+
+test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test display-vectors-long-test
 
 clean:
 	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test /tmp/mm77la_display_mux_test /tmp/mm77la_display_mux_rtl_test /tmp/mm77la_display_pwm_test
