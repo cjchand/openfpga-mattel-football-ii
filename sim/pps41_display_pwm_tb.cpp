@@ -44,6 +44,39 @@ int main(int argc, char** argv) {
     drive_window(dut, DIM_MIN - 1, 1u << 2, 1u << 3);
     CHECK(level(dut, 2, 3) == 0);
 
+    // Test: BRIGHT_MIN - 1 should still be dim (one tick short of bright)
+    drive_window(dut, BRIGHT_MIN - 1, 1u << 2, 1u << 3);
+    CHECK(level(dut, 2, 3) == 1);
+
+    // Test: levels hold steady mid-window (not reset until next window boundary)
+    drive_window(dut, WINDOW, 1u << 0, 1u << 0);  // fully lit for whole window
+    CHECK(level(dut, 0, 0) == 2);                 // should be bright
+    for (int i = 0; i < WINDOW / 2; i++) {
+        dut->rowsel = 0;
+        dut->rowdata = 0;
+        tick(dut);
+    }
+    CHECK(level(dut, 0, 0) == 2);  // still bright mid-window, hasn't reset yet
+
+    // Test: window_tick fires exactly once per window
+    int window_ticks = 0;
+    for (int i = 0; i < WINDOW * 3; i++) {
+        dut->rowsel = 0;
+        dut->rowdata = 0;
+        tick(dut);
+        if (dut->window_tick) window_ticks++;
+    }
+    CHECK(window_ticks == 3);
+
+    // Test: no coincidence, no accumulation (row and col bits alternate, never both set)
+    for (int i = 0; i < WINDOW; i++) {
+        bool odd = i & 1;
+        dut->rowsel = odd ? (1u << 4) : 0;
+        dut->rowdata = odd ? 0 : (1u << 6);
+        tick(dut);
+    }
+    CHECK(level(dut, 4, 6) == 0);  // should accumulate nothing
+
     delete dut;
     if (failures == 0) { std::printf("PASS\n"); return 0; }
     std::printf("%d FAILURE(S)\n", failures);
