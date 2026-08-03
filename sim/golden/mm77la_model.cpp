@@ -3,6 +3,8 @@
 #include "mm77la_opla.h"
 #include "mm77la_tone.h"
 #include "mm77la_io.h"
+#include "mm77la_display_mux.h"
+#include "mm77la_display_pwm.h"
 
 Mm77laModel::Mm77laModel(const uint8_t* rom, size_t rom_size)
     : rom_(rom), rom_size_(rom_size) {
@@ -40,6 +42,7 @@ void Mm77laModel::reset() {
     ram_.fill(0xF);
     tone_reset(st_.tone);
     io_reset(st_.io);
+    st_.display = DisplayPwmState{};
 }
 
 uint8_t Mm77laModel::rom_read(uint16_t addr) const {
@@ -432,4 +435,8 @@ void Mm77laModel::step() {
     st_.prev3_op = st_.prev2_op;
     st_.prev2_op = st_.prev_op;
     st_.prev_op = op;
+
+    uint16_t rowsel, rowdata;
+    display_mux(st_.io.d_output, st_.io.r_output, rowsel, rowdata);
+    display_pwm_step(st_.display, rowsel, rowdata);
 }

@@ -61,11 +61,11 @@ display-pwm-rtl-test:
 	./obj_dir_display_pwm/Vpps41_display_pwm
 
 golden-test:
-	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/mm77la_model_test.cpp -o /tmp/mm77la_model_test
+	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/mm77la_display_mux.cpp golden/mm77la_display_pwm.cpp golden/mm77la_model_test.cpp -o /tmp/mm77la_model_test
 	/tmp/mm77la_model_test
 
 golden-trace: golden/mm77la_model.cpp golden/trace_main.cpp
-	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/trace_main.cpp -o /tmp/golden_trace
+	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/mm77la_display_mux.cpp golden/mm77la_display_pwm.cpp golden/trace_main.cpp -o /tmp/golden_trace
 
 decode-test:
 	$(VERILATOR) --cc ../src/pps41_decode.v --exe pps41_decode_tb.cpp \
@@ -91,10 +91,26 @@ core-ram-test:
 	$(MAKE) -C obj_dir_core_ram -f Vpps41_core.mk
 	./obj_dir_core_ram/Vpps41_core
 
+# pps41_display_mux.v and pps41_display_pwm.v are not instantiated inside
+# pps41_core.v (the testbench drives them as separate DUTs, see
+# pps41_core_tb.cpp) -- they are independent top-level modules, and
+# Verilator's --cc only ever wraps ONE top per invocation (an unreached
+# second/third top just triggers MULTITOP and gets silently dropped, not
+# built). So each is verilated into its own Mdir to get its own Vfoo.h /
+# Vfoo__ALL.a, and the final pps41_core executable links all three
+# archives together via -LDFLAGS (only one copy of the verilated runtime,
+# from obj_dir_core's own build, is linked in -- the other two archives
+# are pure module object code, no verilated.o/verilated_threads.o inside).
 core-test:
+	$(VERILATOR) --cc ../src/pps41_display_mux.v --Mdir obj_dir_core_dmux -Wall --Wno-UNUSEDSIGNAL
+	$(MAKE) -C obj_dir_core_dmux -f Vpps41_display_mux.mk Vpps41_display_mux__ALL.a
+	$(VERILATOR) --cc ../src/pps41_display_pwm.v --Mdir obj_dir_core_dpwm -Wall --Wno-UNUSEDSIGNAL
+	$(MAKE) -C obj_dir_core_dpwm -f Vpps41_display_pwm.mk Vpps41_display_pwm__ALL.a
 	$(VERILATOR) --cc -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v \
-		--exe pps41_core_tb.cpp golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp \
-		--Mdir obj_dir_core -Wall --Wno-UNUSEDSIGNAL -Wno-WIDTH -CFLAGS "-I.."
+		--exe pps41_core_tb.cpp golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/mm77la_display_mux.cpp golden/mm77la_display_pwm.cpp \
+		--Mdir obj_dir_core -Wall --Wno-UNUSEDSIGNAL -Wno-WIDTH \
+		-CFLAGS "-I.. -I../obj_dir_core_dmux -I../obj_dir_core_dpwm" \
+		-LDFLAGS "../obj_dir_core_dmux/Vpps41_display_mux__ALL.a ../obj_dir_core_dpwm/Vpps41_display_pwm__ALL.a"
 	$(MAKE) -C obj_dir_core -f Vpps41_core.mk
 
 vectors-test: core-test

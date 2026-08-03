@@ -7,6 +7,8 @@
 
 #include "mm77la_tone.h"
 #include "mm77la_io.h"
+#include "mm77la_display_mux.h"
+#include "mm77la_display_pwm.h"
 
 struct Mm77laState {
     uint16_t pc = 0;      // 11-bit program counter
@@ -33,6 +35,7 @@ struct Mm77laState {
                                   // false-positive on those other cases, this flag cannot.
     ToneState tone;
     IoState io;
+    DisplayPwmState display;
     bool unimpl_hit = false;
 };
 

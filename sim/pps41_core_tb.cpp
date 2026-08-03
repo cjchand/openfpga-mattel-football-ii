@@ -1,6 +1,8 @@
 // sim/pps41_core_tb.cpp
 #include "Vpps41_core.h"
 #include "Vpps41_core___024root.h"
+#include "Vpps41_display_mux.h"
+#include "Vpps41_display_pwm.h"
 #include "verilated.h"
 #include "golden/mm77la_model.h"
 #include <cstdio>
@@ -62,6 +64,10 @@ int main(int argc, char** argv) {
     tick(dut);
     dut->rst_n = 1;
 
+    Vpps41_display_mux* dmux = new Vpps41_display_mux;
+    Vpps41_display_pwm* dpwm = new Vpps41_display_pwm;
+    dpwm->rst_n = 0; dpwm->rowsel = 0; dpwm->rowdata = 0;
+
     long ix_hit_count = 0;
     bool int1l_ever_hit = false;
     bool unimpl_ever_hit = false;
@@ -77,6 +83,15 @@ int main(int argc, char** argv) {
         if (addr >= 0x600) addr -= 0x200;
         dut->rom_data = (addr < rom.size()) ? rom[addr] : 0;
         tick(dut);
+
+        dmux->d = dut->d_output_out;
+        dmux->r = dut->r_output_out;
+        dmux->eval();
+        dpwm->rowsel = dmux->rowsel;
+        dpwm->rowdata = dmux->rowdata;
+        dpwm->rst_n = 1;
+        dpwm->clk = 0; dpwm->eval();
+        dpwm->clk = 1; dpwm->eval();
 
         golden.step();
         const auto& g = golden.state();
@@ -114,7 +129,18 @@ int main(int argc, char** argv) {
             }
         }
 
-        if (mismatch) { delete dut; return 1; }
+        // Settled per-window levels are diffed, not raw counters -- the RTL
+        // module doesn't expose its internal cnt[] array.
+        for (int cell = 0; cell < 110; cell++) {
+            int rtl_level = (dpwm->levels[(cell * 2) / 32] >> ((cell * 2) % 32)) & 3;
+            int golden_level = g.display.levels[cell];
+            if (rtl_level != golden_level) {
+                std::printf("cycle %ld: display cell %d level mismatch rtl=%d golden=%d\n", i, cell, rtl_level, golden_level);
+                mismatch = true;
+            }
+        }
+
+        if (mismatch) { delete dut; delete dmux; delete dpwm; return 1; }
     }
 
     std::printf("PASS: %ld cycles, no mismatches\n", cycles);
@@ -122,5 +148,7 @@ int main(int argc, char** argv) {
                  int1l_ever_hit ? "yes" : "no", ix_hit_count);
     std::printf("Unimplemented opcode dispatched: %s\n", unimpl_ever_hit ? "yes" : "no");
     delete dut;
+    delete dmux;
+    delete dpwm;
     return 0;
 }
