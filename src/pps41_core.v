@@ -21,6 +21,7 @@
 module pps41_core (
     input  wire        clk,
     input  wire        rst_n,
+    input  wire        ce,
     output wire [10:0] rom_addr,
     output wire [10:0] pc,
     input  wire [7:0]  rom_data,
@@ -227,7 +228,7 @@ module pps41_core (
         .clk(clk), .rst_n(rst_n),
         .ios_fire(ios_fire), .ios_a(a),
         .int0h_fire(int0h_fire),
-        .cycle_en(1'b1),
+        .cycle_en(ce),
         .tone_freq_out(tone_freq_out),
         .tone_on_out(tone_on_out),
         .spk_output_out(spk_output_out),
@@ -589,7 +590,7 @@ module pps41_core (
             unimpl_hit  <= 1'b0;
             r_output_reg <= 10'h3FF;
             for (i = 0; i < 96; i = i + 1) ram[i] <= 4'hF;
-        end else begin
+        end else if (ce) begin
             pc_reg          <= next_pc;
             a           <= next_a;
             b_reg       <= dbg_b_set ? dbg_b_val : next_b;

@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     Vpps41_display_pwm* dut = new Vpps41_display_pwm;
     dut->rst_n = 0; dut->rowsel = 0; dut->rowdata = 0;
+    dut->ce = 1;
     tick(dut);
     dut->rst_n = 1;
 

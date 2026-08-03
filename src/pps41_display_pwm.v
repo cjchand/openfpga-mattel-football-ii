@@ -2,6 +2,7 @@
 module pps41_display_pwm (
     input  wire         clk,
     input  wire         rst_n,
+    input  wire         ce,
     input  wire [9:0]   rowsel,
     input  wire [10:0]  rowdata,
     output reg  [219:0] levels,    // 110 cells x 2 bits, cell = row*11 + col
@@ -24,7 +25,7 @@ module pps41_display_pwm (
             window_pos  <= 11'd0;
             levels      <= 220'd0;
             window_tick <= 1'b0;
-        end else begin
+        end else if (ce) begin
             window_tick <= 1'b0;
 
             for (row = 0; row < 10; row = row + 1)

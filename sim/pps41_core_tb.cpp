@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
 
     Vpps41_core* dut = new Vpps41_core;
     dut->rst_n = 0; dut->dbg_b_set = 0; dut->dbg_sag_set = 0; dut->dbg_ram_wr = 0; dut->p_input = 0;
+    dut->ce = 1;
     dut->rom_data = rom.empty() ? 0 : rom[0];
     tick(dut);
     dut->rst_n = 1;
@@ -68,6 +69,7 @@ int main(int argc, char** argv) {
     Vpps41_display_mux* dmux = new Vpps41_display_mux;
     Vpps41_display_pwm* dpwm = new Vpps41_display_pwm;
     dpwm->rst_n = 0; dpwm->rowsel = 0; dpwm->rowdata = 0;
+    dpwm->ce = 1;
     dpwm->clk = 0; dpwm->eval();
     dpwm->clk = 1; dpwm->eval();  // actually clock the reset, don't rely on Verilator's zero-init
     dpwm->rst_n = 1;
