@@ -4,7 +4,7 @@ CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
 .PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test display-vectors-long-test test clean
-.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test display-render-test
+.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test display-render-test screenshot
 
 lint-core:
 	$(VERILATOR) --lint-only -Wall --Wno-UNUSEDSIGNAL -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v
@@ -83,6 +83,26 @@ display-render-test:
 		--Mdir obj_dir_display_render -Wall --Wno-UNUSEDSIGNAL --Wno-WIDTH
 	$(MAKE) -C obj_dir_display_render -f Vdisplay_render.mk
 	./obj_dir_display_render/Vdisplay_render
+
+# Debugging/verification aid, not part of `test` -- see screenshot_tb.cpp.
+# Usage: make screenshot ROM=path/to.bin CYCLES=20000 OUT=/tmp/frame.ppm [STIM=stimulus/foo.txt]
+ROM     ?= ../dist/Assets/mattel_football_ii/common/b8000-12.bin
+CYCLES  ?= 20000
+OUT     ?= /tmp/screenshot.ppm
+screenshot:
+	$(VERILATOR) --cc ../src/pps41_display_mux.v --Mdir obj_dir_core_dmux -Wall --Wno-UNUSEDSIGNAL
+	$(MAKE) -C obj_dir_core_dmux -f Vpps41_display_mux.mk Vpps41_display_mux__ALL.a
+	$(VERILATOR) --cc ../src/pps41_display_pwm.v --Mdir obj_dir_core_dpwm -Wall --Wno-UNUSEDSIGNAL
+	$(MAKE) -C obj_dir_core_dpwm -f Vpps41_display_pwm.mk Vpps41_display_pwm__ALL.a
+	$(VERILATOR) --cc ../src/display_render.v --Mdir obj_dir_core_render -Wall --Wno-UNUSEDSIGNAL --Wno-WIDTH
+	$(MAKE) -C obj_dir_core_render -f Vdisplay_render.mk Vdisplay_render__ALL.a
+	$(VERILATOR) --cc -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v \
+		--exe screenshot_tb.cpp \
+		--Mdir obj_dir_screenshot -Wall --Wno-UNUSEDSIGNAL -Wno-WIDTH \
+		-CFLAGS "-I.. -I../obj_dir_core_dmux -I../obj_dir_core_dpwm -I../obj_dir_core_render" \
+		-LDFLAGS "../obj_dir_core_dmux/Vpps41_display_mux__ALL.a ../obj_dir_core_dpwm/Vpps41_display_pwm__ALL.a ../obj_dir_core_render/Vdisplay_render__ALL.a"
+	$(MAKE) -C obj_dir_screenshot -f Vpps41_core.mk
+	./obj_dir_screenshot/Vpps41_core "$(ROM)" "$(CYCLES)" "$(OUT)" $(STIM)
 
 golden-test:
 	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/mm77la_display_mux.cpp golden/mm77la_display_pwm.cpp golden/mm77la_model_test.cpp -o /tmp/mm77la_model_test
