@@ -37,6 +37,30 @@ static void test_digit_slot0_segment_a_lights_when_level_2() {
     CHECK(d.rgb != 0, "segment a of digit slot 0 is non-black when its cell is level 2");
 }
 
+static void test_gap_between_segments_is_black_regardless_of_level() {
+    Vvideo_renderer d;
+    clear(d);
+    set_cell(d, 8, 0, 2); // segment a bright
+    set_cell(d, 8, 6, 2); // segment g bright
+    // (12,12) relative to the digit cell falls between segments a/b/f/g --
+    // proves individual segment shapes are drawn, not a filled cell.
+    d.x = 20 + 12; // digit_x(0)=20
+    d.y = 18 + 12; // DIGIT_Y=18
+    d.eval();
+    CHECK(d.rgb == 0, "gap pixel between segments stays black even with neighboring segments bright");
+}
+
+static void test_bright_brighter_than_dim() {
+    Vvideo_renderer bright, dim;
+    clear(bright); clear(dim);
+    set_cell(bright, 8, 0, 2);
+    set_cell(dim, 8, 0, 1);
+    int cx = 20 + 4 + 16/2, cy = 18 + 4/2; // digit_x(0)=20, DIGIT_Y=18
+    bright.x = cx; bright.y = cy; bright.eval();
+    dim.x = cx; dim.y = cy; dim.eval();
+    CHECK(((bright.rgb >> 16) & 0xFF) > ((dim.rgb >> 16) & 0xFF), "level 2 (bright) has a higher red-channel value than level 1 (dim)");
+}
+
 static void test_row1_decimal_point_lights_when_level_2() {
     Vvideo_renderer d;
     clear(d);
@@ -56,6 +80,18 @@ static void test_field_lamp_slot0_top_lights_when_level_2() {
     d.y = 90 + 10/2;             // STRIP_Y0=90, LAMP_H=10
     d.eval();
     CHECK(d.rgb != 0, "field lamp (slot 0 -> row 8, top) lights up when its cell is level 2");
+}
+
+static void test_field_lamp_slot9_bottom_last_position_reachable() {
+    Vvideo_renderer d;
+    clear(d);
+    set_cell(d, 7, 10, 2); // field screen slot 9 -> row 7 (field_row(9)), bottom lamp -> col 10
+    // FIELD_X0=25, COL_PITCH=35, LAMP_W=20, STRIP_Y0=90, ROW_PITCH=12, LAMP_H=10
+    int cx = 25 + 9 * 35 + (35 - 20) / 2 + 20 / 2;
+    int cy = 90 + 2 * 12 + 10 / 2;
+    d.x = cx; d.y = cy;
+    d.eval();
+    CHECK(d.rgb != 0, "last field lamp (slot 9 -> row 7, bottom) is independently addressable and lights up");
 }
 
 static void test_bezel_disabled_is_plain_black() {
@@ -86,8 +122,11 @@ static void test_bezel_enabled_shows_green_margin() {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     run_test("digit_slot0_segment_a_lights_when_level_2", test_digit_slot0_segment_a_lights_when_level_2);
+    run_test("gap_between_segments_is_black_regardless_of_level", test_gap_between_segments_is_black_regardless_of_level);
+    run_test("bright_brighter_than_dim", test_bright_brighter_than_dim);
     run_test("row1_decimal_point_lights_when_level_2", test_row1_decimal_point_lights_when_level_2);
     run_test("field_lamp_slot0_top_lights_when_level_2", test_field_lamp_slot0_top_lights_when_level_2);
+    run_test("field_lamp_slot9_bottom_last_position_reachable", test_field_lamp_slot9_bottom_last_position_reachable);
     run_test("bezel_disabled_is_plain_black", test_bezel_disabled_is_plain_black);
     run_test("bezel_enabled_shows_label_bar_background", test_bezel_enabled_shows_label_bar_background);
     run_test("bezel_enabled_shows_green_margin", test_bezel_enabled_shows_green_margin);
