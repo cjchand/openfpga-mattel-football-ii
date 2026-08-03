@@ -4,7 +4,7 @@ CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
 .PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test display-vectors-long-test test clean
-.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test display-render-test field-rom-test label-rom-test screenshot startup-state-test
+.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test video-renderer-test field-rom-test label-rom-test screenshot startup-state-test
 
 lint-core:
 	$(VERILATOR) --lint-only -Wall --Wno-UNUSEDSIGNAL -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v
@@ -78,11 +78,16 @@ audio-gen-test:
 	$(MAKE) -C obj_dir_audio_gen -f Vaudio_gen.mk
 	./obj_dir_audio_gen/Vaudio_gen
 
-display-render-test:
-	$(VERILATOR) --cc ../src/display_render.v --exe display_render_tb.cpp \
-		--Mdir obj_dir_display_render -Wall --Wno-UNUSEDSIGNAL --Wno-WIDTH
-	$(MAKE) -C obj_dir_display_render -f Vdisplay_render.mk
-	./obj_dir_display_render/Vdisplay_render
+# video_renderer.v directly instantiates field_rom/label_rom in the
+# Verilog hierarchy (unlike core-test's pps41_display_mux/pwm, which are
+# only linked in at the C++ testbench level -- see the comment on
+# core-test above), so Verilator needs their actual sources at
+# elaboration time, not just prebuilt archives.
+video-renderer-test:
+	$(VERILATOR) --cc ../src/video_renderer.v ../src/field_rom.v ../src/label_rom.v --exe video_renderer_tb.cpp \
+		--Mdir obj_dir_video_renderer -Wall --Wno-UNUSEDSIGNAL --Wno-WIDTH
+	$(MAKE) -C obj_dir_video_renderer -f Vvideo_renderer.mk
+	cd ../src && ../sim/obj_dir_video_renderer/Vvideo_renderer
 
 field-rom-test:
 	$(VERILATOR) --cc ../src/field_rom.v --exe field_rom_tb.cpp \
@@ -215,7 +220,7 @@ display-vectors-long-test: core-test
 	done; \
 	echo "display-vectors-long-test: all display vectors PASS at 3200 cycles"
 
-test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test display-vectors-long-test display-render-test field-rom-test label-rom-test
+test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test display-vectors-long-test video-renderer-test field-rom-test label-rom-test
 
 clean:
 	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test /tmp/mm77la_display_mux_test /tmp/mm77la_display_mux_rtl_test /tmp/mm77la_display_pwm_test
