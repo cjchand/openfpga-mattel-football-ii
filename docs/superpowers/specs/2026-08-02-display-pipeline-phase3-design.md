@@ -209,8 +209,33 @@ across real gameplay-derived I/O, not just synthetic vectors.
 
 ## 6. Completion criteria
 
-- Every named quirk in §5 has golden-model unit-test coverage and a
-  lockstep RTL vector.
+- ~~Every named quirk in §5 has golden-model unit-test coverage and a
+  lockstep RTL vector.~~ **Partially met, as of the final whole-branch
+  review's fix wave:** all six named quirks have golden-model unit-test
+  coverage (`sim/golden/mm77la_display_pwm_test.cpp`,
+  `sim/golden/mm77la_model_test.cpp`). Three now also have dedicated
+  lockstep RTL vector coverage: `sim/vectors/display_dp_via_d11.bin`
+  (D[11]-drives-the-DP, regenerated during the fix wave to actually select
+  a row — the original version set only D[11], giving `rowsel=0` and
+  never exercising the bit's real contribution), `display_multi_row_select.bin`
+  (multi-bit `rowsel`), and both — now run for 3200 cycles via
+  `sim/Makefile`'s `display-vectors-long-test` target — cross two window
+  boundaries, exercising "column driven for a full window → level 2" and
+  the general window-boundary-crossing behavior end-to-end through the
+  full `pps41_core_tb.cpp` harness. The remaining three quirks —
+  `DIM_MIN`-exact, `DIM_MIN - 1`, and `BRIGHT_MIN - 1` (the strict-greater
+  threshold boundaries) and the window-boundary-mid-instruction/
+  skip-consumed-cycle quirk (fixed in commit `27f6107`) — still have only
+  golden-model/standalone-module unit-test coverage, not a lockstep
+  vector that drives the CPU through a ROM program to hit those exact
+  counts or that specific skip/boundary coincidence. Building such vectors
+  would require assembling an instruction sequence that lands a precise
+  on-cycle count relative to a window boundary through the LFSR-PC
+  addressing scheme (see `sim/vectors/display_dp_via_d11.bin`'s
+  regeneration for the difficulty even the simpler existing vectors ran
+  into) — judged out of scope for this fix wave; left as a gap for a
+  future task if tighter lockstep coverage of the exact threshold cycle
+  counts is wanted.
 - The extended lockstep harness (now diffing per-cell accumulator state
   every cycle and the settled snapshot every window) passes zero-mismatch
   on the real ROM run.
