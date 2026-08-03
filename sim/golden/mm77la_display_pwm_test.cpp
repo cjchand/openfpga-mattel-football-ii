@@ -48,6 +48,31 @@ static void test_window_tick_fires_once_per_window() {
     CHECK(ticks == 3);
 }
 
+// Drives `on` cycles at the END of the window (through and including the
+// boundary/classification cycle), not the start. The golden model already
+// increments cnt[cell] before checking the boundary condition every call
+// (see display_pwm_step), so it has always included the boundary cycle's
+// own contribution -- this test documents that property and gives the RTL
+// side (whose classification previously read the stale pre-increment
+// value on this exact cycle) a matching golden reference to lockstep
+// against.
+static void drive_window_tail(DisplayPwmState& st, int on, uint16_t rowsel, uint16_t rowdata) {
+    for (int i = 0; i < kDisplayWindow; i++) {
+        bool active = i >= (kDisplayWindow - on);
+        display_pwm_step(st, active ? rowsel : 0, active ? rowdata : 0);
+    }
+}
+
+static void test_boundary_cycle_activity_counts() {
+    DisplayPwmState st;
+    drive_window_tail(st, kDisplayBrightMin, 1u << 5, 1u << 7);
+    CHECK(st.levels[5 * 11 + 7] == 2);
+
+    DisplayPwmState st2;
+    drive_window_tail(st2, kDisplayDimMin, 1u << 5, 1u << 7);
+    CHECK(st2.levels[5 * 11 + 7] == 1);
+}
+
 static void test_no_coincidence_no_accumulation() {
     DisplayPwmState st;
     // row bit and col bit alternate, never both present in the same call
@@ -62,6 +87,7 @@ int main() {
     test_thresholds();
     test_levels_hold_mid_window();
     test_window_tick_fires_once_per_window();
+    test_boundary_cycle_activity_counts();
     test_no_coincidence_no_accumulation();
     if (failures == 0) { std::printf("PASS\n"); return 0; }
     std::printf("%d FAILURE(S)\n", failures);

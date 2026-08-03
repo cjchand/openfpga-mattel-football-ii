@@ -18,6 +18,21 @@ static void drive_window(Vpps41_display_pwm* dut, int on, uint16_t rowsel, uint1
     }
 }
 
+// Same as drive_window, but the `on` cycles are the LAST `on` cycles of the
+// window (including the WIN_LAST boundary cycle itself) rather than the
+// first -- regression test for the off-by-one where the RTL's boundary
+// classification read the stale pre-increment cnt[i], silently dropping
+// the WIN_LAST cycle's own contribution when that cycle happened to be
+// active.
+static void drive_window_tail(Vpps41_display_pwm* dut, int on, uint16_t rowsel, uint16_t rowdata) {
+    for (int i = 0; i < WINDOW; i++) {
+        bool active = i >= (WINDOW - on);
+        dut->rowsel = active ? rowsel : 0;
+        dut->rowdata = active ? rowdata : 0;
+        tick(dut);
+    }
+}
+
 static int level(Vpps41_display_pwm* dut, int row, int col) {
     int cell = row * 11 + col;
     return (dut->levels[(cell * 2) / 32] >> ((cell * 2) % 32)) & 3;
@@ -76,6 +91,31 @@ int main(int argc, char** argv) {
         tick(dut);
     }
     CHECK(level(dut, 4, 6) == 0);  // should accumulate nothing
+
+    // The tests above don't all run in exact multiples of WINDOW cycles
+    // (the "levels hold steady mid-window" test deliberately advances only
+    // WINDOW/2 cycles past its boundary), so window_pos may currently be
+    // mid-window rather than freshly reset to 0. drive_window_tail below
+    // depends on knowing exactly where WIN_LAST falls, so resync to a
+    // window boundary first by idling until window_tick fires.
+    while (!dut->window_tick) {
+        dut->rowsel = 0;
+        dut->rowdata = 0;
+        tick(dut);
+    }
+
+    // Test: BRIGHT_MIN on-cycles placed at the END of the window (through
+    // and including the WIN_LAST boundary cycle) must still classify as
+    // bright -- the boundary-cycle classification must include that same
+    // cycle's own increment, not the stale pre-increment count.
+    drive_window_tail(dut, BRIGHT_MIN, 1u << 5, 1u << 7);
+    CHECK(level(dut, 5, 7) == 2);
+
+    // Test: exactly DIM_MIN on-cycles at the end of the window (boundary
+    // cycle active) must land dim, not off -- same boundary-inclusion
+    // property at the other threshold.
+    drive_window_tail(dut, DIM_MIN, 1u << 5, 1u << 7);
+    CHECK(level(dut, 5, 7) == 1);
 
     delete dut;
     if (failures == 0) { std::printf("PASS\n"); return 0; }

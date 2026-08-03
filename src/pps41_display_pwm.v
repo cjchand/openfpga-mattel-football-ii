@@ -35,17 +35,33 @@ module pps41_display_pwm (
             if (window_pos == WIN_LAST) begin
                 window_pos  <= 11'd0;
                 window_tick <= 1'b1;
-                for (i = 0; i < 110; i = i + 1) begin
-                    /* verilator lint_off WIDTHEXPAND */
-                    if (cnt[i] >= BRIGHT_MIN)
-                        levels[i*2 +: 2] <= 2'd2;
-                    else if (cnt[i] >= DIM_MIN)
-                        levels[i*2 +: 2] <= 2'd1;
-                    else
-                        levels[i*2 +: 2] <= 2'd0;
-                    /* verilator lint_on WIDTHEXPAND */
-                    cnt[i] <= 11'd0;
-                end
+                // This is the same clock edge that just issued this cycle's
+                // per-cell increments above (nonblocking assignments to the
+                // same cnt[i] registers). Verilog resolves multiple
+                // nonblocking assignments to one signal within a single
+                // always-block invocation by letting the last one issued in
+                // procedural order win -- so a bare `cnt[i]` read here would
+                // see the STALE pre-increment value (the increment loop's
+                // effect is only visible starting next edge, and this same
+                // block's `cnt[i] <= 0` below would clobber it anyway).
+                // The golden model increments cnt[cell] in plain C++ (takes
+                // effect immediately) and THEN classifies from the
+                // post-increment value on the boundary cycle. To match that,
+                // explicitly fold this cycle's own would-be increment into
+                // the classification comparison rather than reading cnt[i]
+                // bare.
+                for (row = 0; row < 10; row = row + 1)
+                    for (col = 0; col < 11; col = col + 1) begin
+                        /* verilator lint_off WIDTHEXPAND */
+                        if ((cnt[row*11+col] + ((rowsel[row] && rowdata[col]) ? 11'd1 : 11'd0)) >= BRIGHT_MIN)
+                            levels[(row*11+col)*2 +: 2] <= 2'd2;
+                        else if ((cnt[row*11+col] + ((rowsel[row] && rowdata[col]) ? 11'd1 : 11'd0)) >= DIM_MIN)
+                            levels[(row*11+col)*2 +: 2] <= 2'd1;
+                        else
+                            levels[(row*11+col)*2 +: 2] <= 2'd0;
+                        /* verilator lint_on WIDTHEXPAND */
+                        cnt[row*11+col] <= 11'd0;
+                    end
             end else
                 window_pos <= window_pos + 11'd1;
         end
