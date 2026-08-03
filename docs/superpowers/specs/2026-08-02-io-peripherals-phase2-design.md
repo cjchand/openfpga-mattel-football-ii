@@ -290,6 +290,57 @@ don't leave it as a standing guess.
 - The idle-loop hypothesis from Phase 1's final review is either confirmed
   or refuted with concrete evidence from the stimulus-driven run.
 
+## Idle-loop investigation result (2026-08-02)
+
+**Refuted, with evidence — not confirmed.** After fixing a genuine
+shared-derivation bug this phase surfaced (see the "Genuine bug found via
+`unimpl_hit` instrumentation" note below), the real-ROM lockstep run passes
+200,000 cycles with zero RTL/golden mismatches and now visits **97** unique
+PC values in steady state (down from Phase 1's post-fix figure of 113 —
+expected, since fixing the newly-found `EOB` dispatch gap changes which
+instructions actually execute along the way).
+
+Holding each of Score (`0x01`), Status (`0x02`), Kick (`0x10`), Pass
+(`0x20`), D-pad Up (`0x04`), and all buttons simultaneously (`0xFF`) from
+cycle 1000 onward — via `sim/stimulus/all_buttons_hold.txt` and the same
+mechanism for each individual button — produces **identical** 97-unique-PC
+results in every case. No button, individually or combined, changes the
+loop's PC footprint at all.
+
+Root cause, confirmed by direct instrumentation (counting `I1SK`/`I2C`
+dispatches over the full 200,000-cycle run holding all buttons the whole
+time): **`I1SK` fires exactly twice, both near cycle ~200 (coincident with
+the one-time `XAS` hit — both consistent with a one-time boot/init
+sequence), and never again; `I2C` never fires at all.** The steady-state
+idle loop the ROM settles into does not poll the P port at all — it isn't
+waiting on button input at this point, so no button stimulus can be expected
+to unstick it. Whatever this loop actually is (a display/animation wait, a
+timer/tone-count wait, or something not yet modeled at this phase), it is
+not the button-polling loop Phase 1's hypothesis assumed. This is a
+concrete, evidence-backed refutation, not a guess — re-open this question in
+a later phase once the display pipeline exists and the loop's actual purpose
+can be cross-referenced against what it's plausibly rendering/waiting for.
+
+**Genuine bug found via `unimpl_hit` instrumentation (not one of the
+expected `LXA`/`XAX`/`XAS` — a real, previously-unknown Phase 1 bug):** the
+new "unimplemented opcode dispatched" flag (added per this spec's own
+Global-Constraints commitment to empirically check, not assume) caught the
+real ROM hitting an opcode within its first ~150 cycles that was silently
+falling through as a no-op in **both** the golden model and the RTL
+identically — exactly the "shared derivation bug" category Phase 1's final
+review flagged as a standing risk category. Root cause: `EOB` is reachable
+via **two** byte ranges, `0x08-0x0B` and `0x0C-0x0F` (MAME's `mm78.cpp`:
+`case 0x08: case 0x0c: op_eob();`), both using the opcode's low 2 bits as
+the immediate; Phase 1 only wired up the `0x08` range. Fixed in both models
+(dispatch and the LB/EOB coalescing-suppression check, which needed the same
+0x08-0x0F range fix). After the fix, the real-ROM lockstep run still passes
+with zero mismatches, confirming the fix didn't introduce a new divergence.
+`XAS` (`0x74`) is the only opcode that still legitimately hits the
+`unimpl_hit` flag across the full 200,000-cycle run (once, near cycle 202),
+matching the explicitly-out-of-scope set from this spec's Global
+Constraints — S is unused by Football II, so this is expected and requires
+no further action.
+
 ## Open risks carried over from Phase 1 and initial-plan.md §9
 
 - `INT1L` remains genuinely unknown/unimplemented real-hardware behavior —
