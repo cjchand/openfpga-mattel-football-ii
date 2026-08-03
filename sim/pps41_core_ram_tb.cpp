@@ -17,7 +17,7 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     Vpps41_core* dut = new Vpps41_core;
 
-    dut->rst_n = 0; dut->rom_data = 0; dut->dbg_b_set = 0; dut->dbg_sag_set = 0; dut->dbg_ram_wr = 0; tick(dut);
+    dut->rst_n = 0; dut->rom_data = 0; dut->p_input = 0; dut->dbg_b_set = 0; dut->dbg_sag_set = 0; dut->dbg_ram_wr = 0; tick(dut);
     dut->rst_n = 1;
 
     // Bank A mirror: write 0x3 at 0x40, expect it readable at 0x48 and 0x58, not at 0x50.

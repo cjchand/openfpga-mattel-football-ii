@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     Vpps41_core* dut = new Vpps41_core;
 
-    dut->rst_n = 0; dut->rom_data = 0x00; dut->eval();
+    dut->rst_n = 0; dut->rom_data = 0x00; dut->p_input = 0; dut->eval();
     dut->clk = 0; dut->eval();
     dut->clk = 1; dut->eval();
     dut->rst_n = 1;

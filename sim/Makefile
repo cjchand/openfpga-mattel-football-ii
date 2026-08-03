@@ -4,16 +4,48 @@ CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
 .PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test test clean
+.PHONY: opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test
 
 lint-core:
-	$(VERILATOR) --lint-only -Wall --Wno-UNUSEDSIGNAL ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v
+	$(VERILATOR) --lint-only -Wall --Wno-UNUSEDSIGNAL -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v
+
+opla-test:
+	python3 ../tools/gen_opla_table.py ../development-assets/mm77la_mfootb2_output.pla ../src/pps41_opla_table.vh golden/mm77la_opla_table.h
+	$(CXX) $(CXXFLAGS) golden/mm77la_opla.cpp golden/mm77la_opla_test.cpp -o /tmp/mm77la_opla_test
+	/tmp/mm77la_opla_test
+
+opla-rtl-test:
+	$(VERILATOR) --cc -I../src ../src/pps41_opla.v --exe pps41_opla_tb.cpp \
+		--Mdir obj_dir_opla -Wall -Wno-WIDTH
+	$(MAKE) -C obj_dir_opla -f Vpps41_opla.mk
+	./obj_dir_opla/Vpps41_opla
+
+tone-test:
+	$(CXX) $(CXXFLAGS) golden/mm77la_tone.cpp golden/mm77la_tone_test.cpp -o /tmp/mm77la_tone_test
+	/tmp/mm77la_tone_test
+
+tone-rtl-test:
+	$(VERILATOR) --cc ../src/pps41_tone.v --exe pps41_tone_tb.cpp \
+		--Mdir obj_dir_tone -Wall --Wno-UNUSEDSIGNAL
+	$(MAKE) -C obj_dir_tone -f Vpps41_tone.mk
+	./obj_dir_tone/Vpps41_tone
+
+io-test:
+	$(CXX) $(CXXFLAGS) golden/mm77la_io.cpp golden/mm77la_io_test.cpp -o /tmp/mm77la_io_test
+	/tmp/mm77la_io_test
+
+io-rtl-test:
+	$(VERILATOR) --cc ../src/pps41_io.v --exe pps41_io_tb.cpp \
+		--Mdir obj_dir_io -Wall --Wno-UNUSEDSIGNAL
+	$(MAKE) -C obj_dir_io -f Vpps41_io.mk
+	./obj_dir_io/Vpps41_io
 
 golden-test:
-	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_model_test.cpp -o /tmp/mm77la_model_test
+	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/mm77la_model_test.cpp -o /tmp/mm77la_model_test
 	/tmp/mm77la_model_test
 
 golden-trace: golden/mm77la_model.cpp golden/trace_main.cpp
-	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/trace_main.cpp -o /tmp/golden_trace
+	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/trace_main.cpp -o /tmp/golden_trace
 
 decode-test:
 	$(VERILATOR) --cc ../src/pps41_decode.v --exe pps41_decode_tb.cpp \
@@ -28,21 +60,21 @@ alu-test:
 	./obj_dir_alu/Vpps41_alu
 
 core-pc-test:
-	$(VERILATOR) --cc ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v --exe pps41_core_pc_tb.cpp \
+	$(VERILATOR) --cc -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v --exe pps41_core_pc_tb.cpp \
 		--Mdir obj_dir_core_pc -Wall --Wno-UNUSEDSIGNAL
 	$(MAKE) -C obj_dir_core_pc -f Vpps41_core.mk
 	./obj_dir_core_pc/Vpps41_core
 
 core-ram-test:
-	$(VERILATOR) --cc ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v --exe pps41_core_ram_tb.cpp \
+	$(VERILATOR) --cc -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v --exe pps41_core_ram_tb.cpp \
 		--Mdir obj_dir_core_ram -Wall --Wno-UNUSEDSIGNAL
 	$(MAKE) -C obj_dir_core_ram -f Vpps41_core.mk
 	./obj_dir_core_ram/Vpps41_core
 
 core-test:
-	$(VERILATOR) --cc ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v \
-		--exe pps41_core_tb.cpp golden/mm77la_model.cpp \
-		--Mdir obj_dir_core -Wall --Wno-UNUSEDSIGNAL -CFLAGS "-I.."
+	$(VERILATOR) --cc -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v \
+		--exe pps41_core_tb.cpp golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp \
+		--Mdir obj_dir_core -Wall --Wno-UNUSEDSIGNAL -Wno-WIDTH -CFLAGS "-I.."
 	$(MAKE) -C obj_dir_core -f Vpps41_core.mk
 
 vectors-test: core-test
@@ -55,7 +87,7 @@ vectors-test: core-test
 	done; \
 	echo "vectors-test: all vectors PASS"
 
-test: lint-core decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test
+test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test core-test vectors-test
 
 clean:
-	rm -rf obj_dir* /tmp/mm77la_model_test
+	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test
