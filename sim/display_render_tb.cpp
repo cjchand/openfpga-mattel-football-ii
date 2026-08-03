@@ -2,7 +2,10 @@
 // which of the 110 PWM cells) and the level-to-color mapping. Geometry
 // constants mirrored from src/display_render.v -- kept in sync by the two
 // lint/compile steps below (a mismatch here would show up as every test
-// failing, not a silent pass).
+// failing, not a silent pass). Row/order values (digit screen slot 0 ->
+// levels[] row 8, field screen slot 0 -> levels[] row 8, etc.) mirror the
+// digit_row()/field_row() functions there, sourced from a local MAME
+// checkout -- see src/display_render.v's header comment.
 #include "Vdisplay_render.h"
 #include "verilated.h"
 #include <cstdio>
@@ -36,30 +39,30 @@ static void clear(Vdisplay_render& d) {
     for (int i = 0; i < 7; i++) d.levels[i] = 0;
 }
 
-static void test_digit0_segment_a_lights_when_level_2() {
+static void test_digit_slot0_segment_a_lights_when_level_2() {
     Vdisplay_render d;
     clear(d);
-    set_cell(d, 0, 0, 2); // digit position 0 -> row 0, segment a -> col 0
+    set_cell(d, 8, 0, 2); // screen slot 0 -> levels[] row 8, segment a -> col 0
     d.x = DIGIT_MARGIN_X + 4 + 16/2;   // center of seg a's rect
     d.y = DIGIT_Y + 4/2;
     d.eval();
-    CHECK(d.rgb != 0, "segment a of digit 0 is non-black when its cell is level 2");
+    CHECK(d.rgb != 0, "segment a of digit slot 0 (row 8) is non-black when its cell is level 2");
 }
 
-static void test_digit0_segment_a_off_is_black() {
+static void test_digit_slot0_segment_a_off_is_black() {
     Vdisplay_render d;
     clear(d);
     d.x = DIGIT_MARGIN_X + 4 + 16/2;
     d.y = DIGIT_Y + 4/2;
     d.eval();
-    CHECK(d.rgb == 0, "segment a of digit 0 is black when its cell is level 0");
+    CHECK(d.rgb == 0, "segment a of digit slot 0 is black when its cell is level 0");
 }
 
 static void test_gap_between_segments_is_black_regardless_of_level() {
     Vdisplay_render d;
     clear(d);
-    set_cell(d, 0, 0, 2); // segment a bright
-    set_cell(d, 0, 6, 2); // segment g bright
+    set_cell(d, 8, 0, 2); // segment a bright
+    set_cell(d, 8, 6, 2); // segment g bright
     // (12,12) relative to the digit cell falls between segments a/b/f/g --
     // proves individual segment shapes are drawn, not a filled cell.
     d.x = DIGIT_MARGIN_X + 12;
@@ -71,55 +74,56 @@ static void test_gap_between_segments_is_black_regardless_of_level() {
 static void test_bright_brighter_than_dim() {
     Vdisplay_render bright, dim;
     clear(bright); clear(dim);
-    set_cell(bright, 0, 0, 2);
-    set_cell(dim, 0, 0, 1);
+    set_cell(bright, 8, 0, 2);
+    set_cell(dim, 8, 0, 1);
     int cx = DIGIT_MARGIN_X + 4 + 16/2, cy = DIGIT_Y + 4/2;
     bright.x = cx; bright.y = cy; bright.eval();
     dim.x = cx; dim.y = cy; dim.eval();
     CHECK(((bright.rgb >> 16) & 0xFF) > ((dim.rgb >> 16) & 0xFF), "level 2 (bright) has a higher red-channel value than level 1 (dim)");
 }
 
-static void test_digit1_decimal_point_lights_when_level_2() {
+static void test_row1_decimal_point_lights_when_level_2() {
     Vdisplay_render d;
     clear(d);
-    set_cell(d, 1, 7, 2); // digit position 1 -> row 1, decimal point -> col 7
-    d.x = DIGIT_MARGIN_X + DIGIT_PITCH + DIGIT_CELL_W + 2 + 2; // center of the 4x4 dp box
+    set_cell(d, 1, 7, 2); // real row 1 (screen slot 3: 8,9,0,1,...) has the DP, col 7
+    int slot = 3;
+    d.x = DIGIT_MARGIN_X + slot*DIGIT_PITCH + DIGIT_CELL_W + 2 + 2; // center of the 4x4 dp box
     d.y = DIGIT_Y + DIGIT_CELL_H - 4 + 2;
     d.eval();
-    CHECK(d.rgb != 0, "digit 1's decimal point is non-black when row 1 col 7 is level 2");
+    CHECK(d.rgb != 0, "row 1's decimal point is non-black when row 1 col 7 is level 2");
 }
 
-static void test_field_lamp_row0_col0_lights_when_level_2() {
+static void test_field_lamp_slot0_top_lights_when_level_2() {
     Vdisplay_render d;
     clear(d);
-    set_cell(d, 3, 0, 2); // field row 0 -> levels[] row 3, col 0
+    set_cell(d, 8, 8, 2); // field screen slot 0 -> levels[] row 8, top lamp -> col 8
     int cx = FIELD_X0 + (FIELD_COL_PITCH - FIELD_DOT) / 2 + FIELD_DOT / 2;
     int cy = FIELD_Y0 + FIELD_DOT / 2;
     d.x = cx; d.y = cy;
     d.eval();
-    CHECK(d.rgb != 0, "field lamp (row 0, col 0) lights up when its cell is level 2");
+    CHECK(d.rgb != 0, "field lamp (slot 0 -> row 8, top) lights up when its cell is level 2");
 }
 
-static void test_field_lamp_row2_col9_last_position_reachable() {
+static void test_field_lamp_slot9_bottom_last_position_reachable() {
     Vdisplay_render d;
     clear(d);
-    set_cell(d, 5, 9, 2); // field row 2 -> levels[] row 5, last col 9
+    set_cell(d, 7, 10, 2); // field screen slot 9 -> levels[] row 7, bottom lamp -> col 10
     int cx = FIELD_X0 + 9 * FIELD_COL_PITCH + (FIELD_COL_PITCH - FIELD_DOT) / 2 + FIELD_DOT / 2;
     int cy = FIELD_Y0 + 2 * FIELD_ROW_PITCH + FIELD_DOT / 2;
     d.x = cx; d.y = cy;
     d.eval();
-    CHECK(d.rgb != 0, "last field lamp (row 2, col 9) is independently addressable and lights up");
+    CHECK(d.rgb != 0, "last field lamp (slot 9 -> row 7, bottom) is independently addressable and lights up");
 }
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
-    run_test("digit0_segment_a_lights_when_level_2", test_digit0_segment_a_lights_when_level_2);
-    run_test("digit0_segment_a_off_is_black", test_digit0_segment_a_off_is_black);
+    run_test("digit_slot0_segment_a_lights_when_level_2", test_digit_slot0_segment_a_lights_when_level_2);
+    run_test("digit_slot0_segment_a_off_is_black", test_digit_slot0_segment_a_off_is_black);
     run_test("gap_between_segments_is_black_regardless_of_level", test_gap_between_segments_is_black_regardless_of_level);
     run_test("bright_brighter_than_dim", test_bright_brighter_than_dim);
-    run_test("digit1_decimal_point_lights_when_level_2", test_digit1_decimal_point_lights_when_level_2);
-    run_test("field_lamp_row0_col0_lights_when_level_2", test_field_lamp_row0_col0_lights_when_level_2);
-    run_test("field_lamp_row2_col9_last_position_reachable", test_field_lamp_row2_col9_last_position_reachable);
+    run_test("row1_decimal_point_lights_when_level_2", test_row1_decimal_point_lights_when_level_2);
+    run_test("field_lamp_slot0_top_lights_when_level_2", test_field_lamp_slot0_top_lights_when_level_2);
+    run_test("field_lamp_slot9_bottom_last_position_reachable", test_field_lamp_slot9_bottom_last_position_reachable);
     if (g_failures) { std::printf("FAILED: %d check(s)\n", g_failures); return 1; }
     std::printf("PASS: display_render_tb\n");
     return 0;

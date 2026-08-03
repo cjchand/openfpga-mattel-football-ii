@@ -88,6 +88,17 @@ int main(int argc, char** argv) {
         dpwm->clk = 1; dpwm->eval();
     }
 
+    // Raw cell dump on stderr: independent of display_render's screen
+    // layout/mapping, useful for checking which levels[] cells are
+    // actually lit without relying on the renderer being right.
+    for (int row = 0; row < 10; row++) {
+        for (int col = 0; col < 11; col++) {
+            int cell = row * 11 + col;
+            int lvl = (dpwm->levels[(cell * 2) / 32] >> ((cell * 2) % 32)) & 3;
+            if (lvl) std::fprintf(stderr, "cell row=%d col=%d level=%d\n", row, col, lvl);
+        }
+    }
+
     Vdisplay_render* render = new Vdisplay_render;
     for (int w = 0; w < 7; w++) render->levels[w] = dpwm->levels[w];
 

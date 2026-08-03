@@ -3,23 +3,42 @@
 // Renders pps41_display_pwm's already-reconstructed 10x11 PWM matrix
 // (levels[219:0], cell = row*11+col, 2-bit brightness) on a 320x240 canvas.
 //
-// Row roles are sourced from docs/initial-plan.md's MAME-driver comments for
-// mfootb2 (segmask 0x3c7 -> 7f, segmask 0x002 -> ff, DIO0-2/DIO6-9 = digit
-// select, DIO3-5 = led select): rows {0,1,2,6,7,8,9} are the 7 seven-segment
-// digits, row 1 alone also carries the decimal point, and rows {3,4,5} are
-// the 30-lamp field display (3 rows x 10 columns) -- the same 3-row
-// dash-field shape the sibling FB1 project uses for its own field LEDs.
-// That row/column *classification* is real, sourced data, not a guess.
+// Row/column roles and screen ordering below are sourced directly from a
+// local MAME checkout (~/Projects/mame), not guessed:
+//   - src/mame/handheld/hh_pps41.cpp, mfootb2_state::update_display() and
+//     the mfootb2() machine-config: set_segmask(0x3c7, 0x7f) and
+//     set_segmask(0x002, 0xff) mark rows {0,1,2,6,7,8,9} as the 7
+//     seven-segment digits (row 1 alone also gets the decimal point, bit
+//     7); rows {3,4,5} are otherwise unused/unwired (no set_segmask
+//     covers them) -- confirming what docs/initial-plan.md's transcribed
+//     driver comments already said.
+//   - src/mame/layout/mfootb2.lay's explicit element bounds settle the two
+//     things the driver comments alone don't: screen order. The digit
+//     panel group places digit8/digit9/digit0/digit1/digit2/digit6/digit7
+//     left-to-right in that exact row-index order (x=21,37,69,85,101,133,
+//     149) -- NOT ascending row-index order. And the field/LED view places
+//     elements named "8.8/8.9/8.10", "9.8/9.9/9.10", "0.8/0.9/0.10", ...,
+//     "7.8/7.9/7.10" left-to-right in that same row-index order (x=7,27,
+//     47,...,187) -- i.e. EVERY row 0-9 (not just {3,4,5}) has 3 field
+//     lamps, at column-bits {8,9,10} specifically (top/mid/bottom), for
+//     10*3=30 lamps total. The digit rows and field-lamp rows overlap
+//     (rows {0,1,2,6,7,8,9} carry both a digit at columns 0-6/0-7 AND 3
+//     field lamps at columns 8-10 on the same row-select line) rather
+//     than being disjoint row ranges, matching a real multiplexed board
+//     where the field's 10 lamp-columns and the 7 digit tubes share
+//     digit-select lines but only 7 of the 10 have a digit soldered on.
+//   - src/emu/rendlay.cpp's led7seg_component::draw_aligned() gives the
+//     segment-to-bit convention MAME's own <led7seg> layout element uses:
+//     bit0=top(a), bit1=upper-right(b), bit2=lower-right(c), bit3=bottom
+//     (d), bit4=lower-left(e), bit5=upper-left(f), bit6=middle(g),
+//     bit7=decimal point. That's what seg_rect() below implements.
 //
-// Two things below are NOT sourced from hardware (no FBII photo/layout
-// reference exists yet, unlike FB1's photo-calibrated bezel): which bit of
-// a digit row's data is segment a vs. b vs. ... vs. g (assumed standard
-// a-g bit-order 0-6), and which screen position each of the 7 digit rows
-// occupies left-to-right (assumed ascending row-index order). Both are
-// placeholder conventions, disclosed here so a future hardware-verified
-// bezel phase knows exactly what to confirm or correct -- per the design
-// spec's approved "simple procedural shapes" fidelity, this still isn't
-// attempting photo-accurate bezel art.
+// What's still NOT sourced (no FBII photo/hardware reference exists yet,
+// unlike FB1's photo-calibrated bezel): the actual pixel geometry --
+// sizes, spacing, margins below are this project's own procedural choice,
+// not measured off a real device. Per the design spec's approved "simple
+// procedural shapes" fidelity, this still isn't attempting photo-accurate
+// bezel art -- that stays deferred to the dedicated bezel phase.
 module display_render (
     input  wire [219:0] levels,
     input  wire [9:0]   x,   // pixel x within the 320-wide active video region
@@ -31,15 +50,16 @@ module display_render (
     localparam [23:0] C_BRIGHT = 24'hFF8800;
 
     // Digit position (0-6, left-to-right on screen) -> levels[] row index.
+    // Order per mfootb2.lay's digit panel group: digit8,9,0,1,2,6,7.
     function [3:0] digit_row(input [2:0] d);
         case (d)
-            3'd0: digit_row = 4'd0;
-            3'd1: digit_row = 4'd1;
-            3'd2: digit_row = 4'd2;
-            3'd3: digit_row = 4'd6;
-            3'd4: digit_row = 4'd7;
-            3'd5: digit_row = 4'd8;
-            default: digit_row = 4'd9;
+            3'd0: digit_row = 4'd8;
+            3'd1: digit_row = 4'd9;
+            3'd2: digit_row = 4'd0;
+            3'd3: digit_row = 4'd1;
+            3'd4: digit_row = 4'd2;
+            3'd5: digit_row = 4'd6;
+            default: digit_row = 4'd7; // d == 6
         endcase
     endfunction
 
@@ -50,23 +70,40 @@ module display_render (
         digit_x0 = DIGIT_MARGIN_X + d * DIGIT_PITCH;
     endfunction
 
-    // Segment rects within a digit cell, standard 7-seg a-g layout,
-    // {x0, y0, w, h}.
+    // Segment rects within a digit cell, {x0, y0, w, h}, matching MAME's
+    // led7seg_component bit order (see header comment).
     function [39:0] seg_rect(input [2:0] s);
         case (s)
-            3'd0: seg_rect = {10'd4,  10'd0,  10'd16, 10'd4};  // a - top
-            3'd1: seg_rect = {10'd20, 10'd4,  10'd4,  10'd16}; // b - upper right
-            3'd2: seg_rect = {10'd20, 10'd20, 10'd4,  10'd16}; // c - lower right
-            3'd3: seg_rect = {10'd4,  10'd36, 10'd16, 10'd4};  // d - bottom
-            3'd4: seg_rect = {10'd0,  10'd20, 10'd4,  10'd16}; // e - lower left
-            3'd5: seg_rect = {10'd0,  10'd4,  10'd4,  10'd16}; // f - upper left
-            3'd6: seg_rect = {10'd4,  10'd18, 10'd16, 10'd4};  // g - middle
+            3'd0: seg_rect = {10'd4,  10'd0,  10'd16, 10'd4};  // bit0 - top (a)
+            3'd1: seg_rect = {10'd20, 10'd4,  10'd4,  10'd16}; // bit1 - upper right (b)
+            3'd2: seg_rect = {10'd20, 10'd20, 10'd4,  10'd16}; // bit2 - lower right (c)
+            3'd3: seg_rect = {10'd4,  10'd36, 10'd16, 10'd4};  // bit3 - bottom (d)
+            3'd4: seg_rect = {10'd0,  10'd20, 10'd4,  10'd16}; // bit4 - lower left (e)
+            3'd5: seg_rect = {10'd0,  10'd4,  10'd4,  10'd16}; // bit5 - upper left (f)
+            3'd6: seg_rect = {10'd4,  10'd18, 10'd16, 10'd4};  // bit6 - middle (g)
             default: seg_rect = 40'd0;
         endcase
     endfunction
 
-    // Field lamps: rows {3,4,5} (loop index row = 0-2, actual levels[] row
-    // = 3+row), columns 0-9.
+    // Field lamps: EVERY levels[] row (0-9) has 3 lamps at columns 8/9/10
+    // (top/mid/bottom respectively, per mfootb2.lay's y=62/79/96). Screen
+    // left-to-right column order per mfootb2.lay's field view element
+    // x-coords: rows 8,9,0,1,2,3,4,5,6,7 (10 positions).
+    function [3:0] field_row(input [3:0] c);
+        case (c)
+            4'd0: field_row = 4'd8;
+            4'd1: field_row = 4'd9;
+            4'd2: field_row = 4'd0;
+            4'd3: field_row = 4'd1;
+            4'd4: field_row = 4'd2;
+            4'd5: field_row = 4'd3;
+            4'd6: field_row = 4'd4;
+            4'd7: field_row = 4'd5;
+            4'd8: field_row = 4'd6;
+            default: field_row = 4'd7; // c == 9
+        endcase
+    endfunction
+
     localparam FIELD_X0 = 10, FIELD_COL_PITCH = 30;
     localparam FIELD_Y0 = 100, FIELD_ROW_PITCH = 30, FIELD_DOT = 16;
 
@@ -99,13 +136,13 @@ module display_render (
                     rgb = level_color(lvl);
                 end
             end
-            // Decimal point: digit position 1 only, row 1's column 7 (the
-            // "segmask 0x002 -> ff" row), drawn just right of that cell.
-            if (d == 1) begin
+            // Decimal point: row 1 only (segmask 0x002 -> ff), bit 7,
+            // wherever row 1 lands in the screen digit order.
+            if (digit_row(d[2:0]) == 4'd1) begin
                 rx0 = digit_x0(d[2:0]) + DIGIT_CELL_W + 2;
                 ry0 = DIGIT_Y + DIGIT_CELL_H - 4;
                 if (x >= rx0 && x < rx0 + 4 && y >= ry0 && y < ry0 + 4) begin
-                    cell_idx = digit_row(d[2:0]) * 11 + 7;
+                    cell_idx = 4'd1 * 11 + 7;
                     lvl = levels[cell_idx*2 +: 2];
                     rgb = level_color(lvl);
                 end
@@ -117,7 +154,7 @@ module display_render (
                 rx0 = FIELD_X0 + fcol * FIELD_COL_PITCH + (FIELD_COL_PITCH - FIELD_DOT) / 2;
                 ry0 = FIELD_Y0 + frow * FIELD_ROW_PITCH;
                 if (x >= rx0 && x < rx0 + FIELD_DOT && y >= ry0 && y < ry0 + FIELD_DOT) begin
-                    cell_idx = (3 + frow) * 11 + fcol;
+                    cell_idx = field_row(fcol[3:0]) * 11 + (8 + frow);
                     lvl = levels[cell_idx*2 +: 2];
                     rgb = level_color(lvl);
                 end
