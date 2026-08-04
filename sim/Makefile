@@ -4,7 +4,7 @@ CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
 .PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test display-vectors-long-test test clean
-.PHONY: core-top-test debug-probe-test mame-parity-test opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test video-renderer-test field-rom-test label-rom-test screenshot startup-state-test
+.PHONY: pro-switch-test core-top-test debug-probe-test mame-parity-test opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test video-renderer-test field-rom-test label-rom-test screenshot startup-state-test
 
 lint-core:
 	$(VERILATOR) --lint-only -Wall --Wno-UNUSEDSIGNAL -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v
@@ -151,6 +151,13 @@ CORE_TOP_SRCS := ../src/fpga/core/core_top.v ../src/fpga/core/core_bridge_cmd.v 
 	../src/label_rom.v ../src/rom_loader.v ../src/ce_gen.v ../src/audio_gen.v \
 	../src/debug_probe.v
 
+# Executes the real ROM's difficulty-read block and checks the PRO 1/PRO 2
+# pin selects between its two constants -- see the header comment in
+# golden/pro_switch_test.cpp.
+pro-switch-test:
+	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/mm77la_display_mux.cpp golden/mm77la_display_pwm.cpp golden/pro_switch_test.cpp -o /tmp/pro_switch_test
+	/tmp/pro_switch_test $(MAME_PARITY_ROM)
+
 core-top-test:
 	$(VERILATOR) --cc $(CORE_TOP_SRCS) --exe core_top_tb.cpp \
 		-I../src -I../src/fpga/core -I../src/fpga/apf \
@@ -257,7 +264,7 @@ display-vectors-long-test: core-test
 	done; \
 	echo "display-vectors-long-test: all display vectors PASS at 3200 cycles"
 
-test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test mame-parity-test debug-probe-test core-top-test core-test vectors-test display-vectors-long-test video-renderer-test field-rom-test label-rom-test
+test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test mame-parity-test pro-switch-test debug-probe-test core-top-test core-test vectors-test display-vectors-long-test video-renderer-test field-rom-test label-rom-test
 
 clean:
 	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test /tmp/mm77la_display_mux_test /tmp/mm77la_display_mux_rtl_test /tmp/mm77la_display_pwm_test

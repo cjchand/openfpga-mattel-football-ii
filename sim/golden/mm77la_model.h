@@ -63,6 +63,9 @@ public:
     void debug_set_a(uint8_t a) { st_.a = a & 0xF; }
     void debug_set_b(uint8_t b) { st_.b = b & 0x7F; }
     void debug_set_p(uint8_t p) { st_.io.p_input = p; }
+    // External drivers on the D bus. On this board the only one is the
+    // PRO 1 / PRO 2 difficulty switch on DIO10 (bit 10).
+    void debug_set_d_input(uint16_t d) { st_.io.d_input = d & 0xFFF; }
     void debug_set_stack0(uint16_t addr) { st_.stack[0] = addr & 0x7FF; }
     // Test-only: place `value` at ROM address `addr` (after the same
     // 0x600-0x7FF mirror reduction rom_read() applies), independent of the
