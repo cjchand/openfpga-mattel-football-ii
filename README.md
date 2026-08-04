@@ -102,6 +102,9 @@ is why the MAME comparisons exist. `docs/kick-tone-lockup-investigation.md`
 is worth reading before debugging anything here: three CPU bugs hid behind
 exactly that false confidence.
 
+Deferred work — including a sizeable FPGA resource win — is tracked in
+`docs/follow-ups.md`.
+
 ## Credits
 
 All ISA/architecture facts in `docs/initial-plan.md` are transcribed from
