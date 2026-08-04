@@ -516,10 +516,51 @@ core_bridge_cmd icb (
     wire   bezel_enable;
     synch_2 bezel_enable_sync ( bezel_enable_74a, bezel_enable, clk_core_12288, , );
 
+    // The host releases reset_n as soon as the core is "running", which is
+    // BEFORE the ROM data slot has been transferred. Left ungated, the CPU
+    // starts executing at its 0x3C0 reset vector while rom_loader's memory
+    // is still all zeroes -- it runs opcode 0x00 (NOP) through the LFSR PC
+    // sequence, then executes a half-loaded ROM as the bridge writes stream
+    // in, and by the time the image is complete it is at an arbitrary PC
+    // with arbitrary A/B/RAM/stack. Crucially it has already run past the
+    // ROM's own boot sequence at 0x3C0 and never returns to it, so the
+    // RAM-clearing init loop never runs: RAM keeps whatever the reset value
+    // left in locations the game later relies on. Most of the game still
+    // works (the main loop rebuilds most state), which is exactly why this
+    // survived so long -- it surfaces as a hang deep into a play, when the
+    // code finally reads a location boot should have cleared.
+    //
+    // So: hold the CPU and its peripherals in reset until the transfer is
+    // done. target_dataslot_done is the host's completion signal for the
+    // read requested above. The timeout is a safety net only -- if that
+    // signal never arrives the core must still start rather than sit dead
+    // forever, and by ~0.75s a 1536-byte slot transfer has certainly
+    // finished. rom_loader itself is deliberately NOT gated: it has to stay
+    // live to receive the very writes being waited on.
+    localparam [25:0] ROM_WAIT_MAX = 26'd55_000_000; // ~0.75s at 74.25MHz
+    reg [25:0] rom_wait_count;
+    reg        rom_loaded_74a;
+    always @(posedge clk_74a) begin
+        if (!reset_n) begin
+            rom_wait_count <= 26'd0;
+            rom_loaded_74a <= 1'b0;
+        end else if (!rom_loaded_74a) begin
+            rom_wait_count <= rom_wait_count + 26'd1;
+            if (target_dataslot_done || rom_wait_count == ROM_WAIT_MAX)
+                rom_loaded_74a <= 1'b1;
+        end
+    end
+
+    wire rom_loaded;
+    synch_2 rom_loaded_sync ( rom_loaded_74a, rom_loaded, clk_core_12288, , );
+
+    // Core-domain reset for everything that consumes the ROM.
+    wire core_rst_n = reset_n & rom_loaded;
+
     wire        core_ce;
     ce_gen u_ce_gen (
         .clk   ( clk_core_12288 ),
-        .rst_n ( reset_n ),
+        .rst_n ( core_rst_n ),
         .ce    ( core_ce )
     );
 
@@ -595,7 +636,7 @@ end
     wire [1:0]  spk_level_w;
     pps41_core u_pps41_core (
         .clk               ( clk_core_12288 ),
-        .rst_n             ( reset_n ),
+        .rst_n             ( core_rst_n ),
         .ce                ( core_ce ),
         .rom_addr          ( rom_addr_w ),
         .pc                ( dbg_pc_w ),
@@ -635,7 +676,7 @@ end
     wire [10:0] dbg_pc_latched_w;
     debug_probe u_debug_probe (
         .clk         ( clk_core_12288 ),
-        .rst_n       ( reset_n ),
+        .rst_n       ( core_rst_n ),
         .ce          ( core_ce ),
         .pc          ( dbg_pc_w ),
         .tone_on     ( dbg_tone_on_w ),
@@ -683,7 +724,7 @@ end
     wire [219:0] levels_w;
     pps41_display_pwm u_display_pwm (
         .clk         ( clk_core_12288 ),
-        .rst_n       ( reset_n ),
+        .rst_n       ( core_rst_n ),
         .ce          ( core_ce ),
         .rowsel      ( rowsel_w ),
         .rowdata     ( rowdata_w ),
