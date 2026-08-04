@@ -68,6 +68,30 @@ int main(int argc, char** argv) {
     // Between the two rows, the same column is plain black field.
     CHECK(sample(d, 61, 58) < 0x202020, "no hash tick between the two rows");
 
+    // Goal lines carry half-length ticks that reach ONLY into the black
+    // playfield, never into the endzone. Left goal line is the divider at
+    // FIELD_X0=30, with the endzone to its left; right goal line is at
+    // FIELD_X0+COL_PITCH*10 = 370, with the endzone to its right.
+    // HASH_REACH is 4, DIV_W is 2.
+    for (int hy : {40, 76}) {
+        // Left goal line: tick present on the black side (x just right of
+        // the divider), absent on the endzone side.
+        uint32_t left_in  = sample(d, 33, hy); // 30..31 divider, 32..35 reach
+        uint32_t left_out = sample(d, 27, hy); // inside the endzone
+        CHECK(R(left_in) > 150 && G(left_in) > 150 && B(left_in) > 150,
+              "left goal line tick reaches into the black playfield");
+        CHECK(B(left_out) > 150 && B(left_out) > G(left_out) + 50,
+              "left goal line tick does NOT reach into the endzone");
+
+        // Right goal line: mirror image.
+        uint32_t right_in  = sample(d, 368, hy); // 366..369 reach, 370..371 divider
+        uint32_t right_out = sample(d, 376, hy); // inside the endzone
+        CHECK(R(right_in) > 150 && G(right_in) > 150 && B(right_in) > 150,
+              "right goal line tick reaches into the black playfield");
+        CHECK(B(right_out) > 150 && B(right_out) > G(right_out) + 50,
+              "right goal line tick does NOT reach into the endzone");
+    }
+
     if (g_failures) { std::printf("FAILED: %d check(s)\n", g_failures); return 1; }
     std::printf("PASS: field_rom_tb\n");
     return 0;

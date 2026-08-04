@@ -149,7 +149,8 @@ def build_field_image():
     """Draws the field band procedurally: green background, a solid
     border framing the strip, 10 black field columns divided by light
     dividers, an endzone column on each side, and two rows of
-    hash-mark ticks at each internal divider, as on FB1."""
+    hash-mark ticks: full-length at each internal yard line, half-length
+    at the two goal lines (reaching only into the black playfield)."""
     im = Image.new("RGB", (FIELD_W, STRIP_Y1 - STRIP_Y0 + 2 * BORDER_W), GREEN_RGB)
     draw = ImageDraw.Draw(im)
     # Shift everything down by BORDER_W so the border has room above the
@@ -176,11 +177,18 @@ def build_field_image():
 
     for hy_strip in (HASH_Y1, HASH_Y2):
         hash_y = y0 + (hy_strip - STRIP_Y0)
-        for dx in divider_xs[1:10]:  # internal dividers only, not the 2 bordering the endzones
-            draw.rectangle(
-                [dx - HASH_REACH, hash_y - HASH_H // 2, dx + DIV_W - 1 + HASH_REACH, hash_y + HASH_H // 2 - 1],
-                fill=DIVIDER_RGB,
-            )
+        y_top, y_bot = hash_y - HASH_H // 2, hash_y + HASH_H // 2 - 1
+        # Internal yard lines: full-length ticks, reaching both ways.
+        for dx in divider_xs[1:10]:
+            draw.rectangle([dx - HASH_REACH, y_top, dx + DIV_W - 1 + HASH_REACH, y_bot],
+                           fill=DIVIDER_RGB)
+        # Goal lines: half-length ticks that reach only into the black
+        # playfield, never into the endzone. The left goal line therefore
+        # extends right, the right goal line extends left. Same as FB1.
+        draw.rectangle([divider_xs[0], y_top, divider_xs[0] + DIV_W - 1 + HASH_REACH, y_bot],
+                       fill=DIVIDER_RGB)
+        draw.rectangle([divider_xs[10] - HASH_REACH, y_top, divider_xs[10] + DIV_W - 1, y_bot],
+                       fill=DIVIDER_RGB)
 
     return im
 
