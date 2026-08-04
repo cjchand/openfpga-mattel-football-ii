@@ -534,11 +534,38 @@ core_bridge_cmd icb (
         .rom_data       ( rom_data_w )
     );
 
+    // Data slot id 0 (b8000-12.bin, data.json) is never auto-transferred by
+    // APF: core_bridge_cmd.v's target_dataslot_read is host<-target, so the
+    // core itself must request the read. Without this, bridge_wr never
+    // fires for rom_loader and its BRAM stays at power-on zero -- the CPU
+    // then executes opcode 0x00 (NOP) forever, which is silent and never
+    // lights any LED. Fire the request once, on the rising edge of
+    // status_setup_done (per core_bridge_cmd.v's own comment: "rising edge
+    // triggers a target command"). Same pattern as the sibling FB1 project,
+    // which hit this exact bug on real hardware first.
+    reg         status_setup_done_r;
+    reg         rom_load_pending;
+always @(posedge clk_74a) begin
+    status_setup_done_r <= status_setup_done;
+    target_dataslot_read <= 1'b0;
+    if (status_setup_done && !status_setup_done_r) begin
+        rom_load_pending <= 1'b1;
+    end
+    if (rom_load_pending) begin
+        target_dataslot_read      <= 1'b1;
+        target_dataslot_id        <= 16'd0;
+        target_dataslot_slotoffset <= 32'd0;
+        target_dataslot_bridgeaddr <= 32'h10000000;
+        target_dataslot_length    <= 32'd1536; // b8000-12.bin: 384 words x 4 bytes
+        rom_load_pending          <= 1'b0;
+    end
+end
+
     // p_input bit mapping, per docs/initial-plan.md §7's IN.0 table.
     // Face buttons match the real device's layout (Phase 5 remap):
     // top=Score, bottom=Kick, left=Status, right=Pass. Select/Start are
     // kept as redundant alternates for Status/Score.
-    wire [7:0] p_input_w = {
+    wire [7:0] p_input_74a = {
         cont1_key[2],                  // bit7: Left     = dpad_left
         cont1_key[1],                  // bit6: Down     = dpad_down
         cont1_key[4],                  // bit5: Pass     = face_a (right)
@@ -548,6 +575,18 @@ core_bridge_cmd icb (
         cont1_key[7] | cont1_key[14],  // bit1: Status   = face_y (left) | Select
         cont1_key[6] | cont1_key[15]   // bit0: Score    = face_x (top)  | Start
     };
+
+    // cont1_key is in the clk_74a domain; the CPU samples p_input in the
+    // clk_core_12288 domain. Feeding it across unsynchronised let the CPU
+    // latch a metastable or half-updated value on any button edge -- and the
+    // ROM reads this port with I1SK/I2C, which branch on it, so a single bad
+    // sample can divert control flow. Same 2-FF treatment bezel_enable
+    // already gets. Synchronising the 8 bits independently means an edge can
+    // still be seen a cycle apart across bits, but each bit is now stable and
+    // resolved; a real button press lasts millions of core cycles, so a
+    // one-cycle skew between bits is harmless, whereas metastability is not.
+    wire [7:0] p_input_w;
+    synch_2 #(.WIDTH(8)) p_input_sync (p_input_74a, p_input_w, clk_core_12288, , );
 
     wire [9:0]  r_output_w;
     wire [11:0] d_output_w;
