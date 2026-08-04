@@ -635,6 +635,13 @@ propose:
    Football II ROM shows this opcode is executed, this is a real gap we'd
    need to either reverse-engineer ourselves (via real-hardware testing) or
    accept as a known limitation.
+
+   **RESOLVED (2026-08-04): not a gap for this game.** The opcode byte
+   `0x04` occurs **zero** times in the ROM image, and the model's
+   `int1l_hit` flag never fires across a 4,000,000-cycle run including a
+   full kickoff. Our flag-only no-op is therefore unreachable here. Worth
+   implementing properly for completeness (MAME's base tier does
+   `m_skip = !m_int_line[1]`), but it cannot affect this title.
 3. **Pinout for B8000 explicitly marked "might not be accurate"** in the
    MAME source pinout diagram comment. Irrelevant for a from-ROM emulation
    core (we don't care about physical pin numbers, only logical D/R/P bus
@@ -655,6 +662,18 @@ propose:
    against actual ROM behavior whether DIO11 carries real signal or is
    unused/tied off, before assuming an 11-bit vs 12-bit D-bus width in the
    RTL.
+
+   **RESOLVED (2026-08-04): the D bus is genuinely 12 bits, and DIO11 is
+   the meaningful one.** Over a 4,000,000-cycle run the union of all
+   `d_output` values is `0xBFF` — bits 0-9 and **bit 11** are driven, and
+   **bit 10 is never driven at all**.
+
+   Note this contradicts the MAME driver's own comment ("DIO10: 4th digit
+   DP"), but agrees with its *code*: `mfootb2_state::update_display()` folds
+   the DP in via `(m_d >> 4 & 0x80)`, which selects `m_d` bit **11**, not
+   bit 10. The code is authoritative and our display mux already matches it
+   (see the `display_dp_via_d11.bin` regression vector). Treat the driver's
+   pin-naming comments with suspicion; read the expressions.
 
 ---
 
