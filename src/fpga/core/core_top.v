@@ -503,7 +503,22 @@ core_bridge_cmd icb (
     // host in response to bridge reads/writes at 0xF8002000). Only one
     // flag needed (unlike FB1's 3-flag round-robin scan), so the address
     // stays fixed at word 0.
-    assign datatable_addr = 10'd0;
+    // Two interact.json variables now live in the datatable (word 0 =
+    // Presentation, word 1 = PRO 2), so the read address has to alternate
+    // rather than sit at word 0. Each address is held for 8 clk_74a cycles
+    // and the result latched at the end of its slot, which is far more
+    // settling time than the datatable's registered read needs, and these
+    // are user settings that change at human speed.
+    reg [3:0]  dt_phase;
+    reg [9:0]  dt_addr_r;
+    reg [31:0] dt_word0, dt_word1;
+    always @(posedge clk_74a) begin
+        dt_phase  <= dt_phase + 1'b1;
+        dt_addr_r <= dt_phase[3] ? 10'd1 : 10'd0;
+        if (dt_phase == 4'd7)  dt_word0 <= datatable_q;
+        if (dt_phase == 4'd15) dt_word1 <= datatable_q;
+    end
+    assign datatable_addr = dt_addr_r;
     assign datatable_wren = 1'b0;
     assign datatable_data = 32'd0;
     // Expected: this reads 0 (bezel off) from power-on until the APF host
@@ -511,10 +526,21 @@ core_bridge_cmd icb (
     // defaultval:1 -- the datatable powers up zeroed and only the host
     // knows the setting. Not a bug; the sibling FB1 project's equivalent
     // "Overlay" toggle uses the same mechanism and works on real hardware.
-    wire   bezel_enable_74a = datatable_q[0];
+    wire   bezel_enable_74a = dt_word0[0];
 
     wire   bezel_enable;
     synch_2 bezel_enable_sync ( bezel_enable_74a, bezel_enable, clk_core_12288, , );
+
+    // PRO 1 / PRO 2 difficulty switch. On the real board this is simply a
+    // switch wired to a CPU pin: the ROM releases DIO10 with ROS and then
+    // tests it with SKISL (at 0x371, reached via LB 10 / EOB 2 / ... / ROS),
+    // branching to LAI 3 or LAI 4 for the two positions. So it is an input
+    // on the D bus, not a core-side game option -- see pps41_io.v.
+    // Switch closed (PRO 2) pulls DIO10 high; open reads low (PRO 1).
+    wire        pro2_enable_74a = dt_word1[0];
+    wire        pro2_enable;
+    synch_2 pro2_enable_sync ( pro2_enable_74a, pro2_enable, clk_core_12288, , );
+    wire [11:0] d_input_w = {1'b0, pro2_enable, 10'b0}; // bit 10 = DIO10
 
     // The host releases reset_n as soon as the core is "running", which is
     // BEFORE the ROM data slot has been transferred. Left ungated, the CPU
@@ -642,6 +668,7 @@ end
         .pc                ( dbg_pc_w ),
         .rom_data          ( rom_data_w ),
         .p_input           ( p_input_w ),
+        .d_input           ( d_input_w ),
         .dbg_b_set         ( 1'b0 ),
         .dbg_b_val         ( 7'h0 ),
         .dbg_sag_set       ( 1'b0 ),

@@ -13,6 +13,18 @@
                 "value_off": 0,
                 "mask": "0xFFFF0000",
                 "persist": true
+            },
+            {
+                "name": "PRO 2 (Hard)",
+                "id": 2,
+                "type": "check",
+                "enabled": true,
+                "address": "0xF8002004",
+                "defaultval": 0,
+                "value": 1,
+                "value_off": 0,
+                "mask": "0xFFFF0000",
+                "persist": true
             }
         ],
         "messages": []

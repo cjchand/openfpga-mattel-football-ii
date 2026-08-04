@@ -12,6 +12,7 @@ module pps41_io (
     input  wire            c_in,
     input  wire [3:0]        a_out_for_ioa,
 
+    input  wire [11:0]        d_input,   // external drivers on the D bus
     input  wire [7:0]         dbg_p_set,
     input  wire                p_set_en,
 
@@ -34,7 +35,12 @@ module pps41_io (
     wire [3:0] bl = ram_addr[3:0];
     wire       bl_valid = (bl < 4'hC);
 
-    assign skisl_skip = (!b7_high && bl_valid) ? ~d_out_reg[bl] : 1'b0;
+    // SKISL reads the pin, which is d_output OR whatever is driving it
+    // externally -- MAME: !BIT((m_d_output | m_read_d()) & m_d_mask, bl).
+    // The ROM releases DIO10 with ROS and then tests it here to read the
+    // PRO 1 / PRO 2 difficulty switch.
+    wire [11:0] d_pin_state = d_out_reg | d_input;
+    assign skisl_skip = (!b7_high && bl_valid) ? ~d_pin_state[bl] : 1'b0;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

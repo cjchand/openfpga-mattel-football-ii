@@ -17,7 +17,7 @@ void io_ros(IoState& io, uint8_t ram_addr) {
 bool io_skisl(const IoState& io, uint8_t ram_addr) {
     if (ram_addr & 0x40) return false;
     uint8_t bl = ram_addr & 0xF;
-    if (bl < 12) return ((io.d_output >> bl) & 1) == 0;
+    if (bl < 12) return (((io.d_output | io.d_input) >> bl) & 1) == 0;
     return false;
 }
 

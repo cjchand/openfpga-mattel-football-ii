@@ -16,7 +16,7 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     Vpps41_io* dut = new Vpps41_io;
     dut->rst_n = 0; dut->sos_fire = 0; dut->ros_fire = 0; dut->ioa_fire = 0; dut->ox_fire = 0;
-    dut->ram_addr = 0; dut->a_in = 0; dut->c_in = 0; dut->a_out_for_ioa = 0;
+    dut->d_input = 0; dut->ram_addr = 0; dut->a_in = 0; dut->c_in = 0; dut->a_out_for_ioa = 0;
     dut->dbg_p_set = 0; dut->p_set_en = 0;
     tick(dut);
     dut->rst_n = 1;
@@ -52,6 +52,30 @@ int main(int argc, char** argv) {
     dut->p_set_en = 0;
     dut->eval();
     CHECK(dut->i2c_a == ((~0xA5 >> 4) & 0xF));
+
+    // SKISL must read the pin, i.e. d_output OR the external d_input --
+    // this is how the ROM reads the PRO 1 / PRO 2 switch on DIO10 after
+    // releasing that pin with ROS. Mirrors the golden model's
+    // test_skisl_reads_the_d_input_pins_too.
+    dut->ram_addr = 10;          // select DIO10
+    dut->ros_fire = 1; tick(dut); dut->ros_fire = 0;  // release the pin
+    dut->d_input = 0;
+    dut->eval();
+    CHECK(dut->skisl_skip == 1); // switch open -> pin low -> skip
+    dut->d_input = 1 << 10;
+    dut->eval();
+    CHECK(dut->skisl_skip == 0); // switch closed -> pin high -> no skip
+    // A CPU-driven high still reads high regardless of the external input.
+    dut->d_input = 0;
+    dut->sos_fire = 1; tick(dut); dut->sos_fire = 0;
+    dut->eval();
+    CHECK(dut->skisl_skip == 0);
+    // An input on DIO10 must not disturb an unrelated pin.
+    dut->ram_addr = 3;
+    dut->ros_fire = 1; tick(dut); dut->ros_fire = 0;
+    dut->d_input = 1 << 10;
+    dut->eval();
+    CHECK(dut->skisl_skip == 1);
 
     delete dut;
     if (failures == 0) { std::printf("PASS\n"); return 0; }

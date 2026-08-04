@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
     golden.reset();
 
     Vpps41_core* dut = new Vpps41_core;
-    dut->rst_n = 0; dut->dbg_b_set = 0; dut->dbg_sag_set = 0; dut->dbg_ram_wr = 0; dut->p_input = 0;
+    dut->rst_n = 0; dut->dbg_b_set = 0; dut->dbg_sag_set = 0; dut->dbg_ram_wr = 0; dut->p_input = 0; dut->d_input = 0;
     dut->ce = 1;
     dut->rom_data = rom.empty() ? 0 : rom[0];
     tick(dut);

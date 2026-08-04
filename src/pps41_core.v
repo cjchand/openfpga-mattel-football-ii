@@ -26,6 +26,7 @@ module pps41_core (
     output wire [10:0] pc,
     input  wire [7:0]  rom_data,
     input  wire [7:0]  p_input,
+    input  wire [11:0] d_input,   // external drivers on the D bus (PRO 1/2 switch on DIO10)
 
     // Debug-only ports for Task 12's isolated RAM-addressing test; still
     // wired for continued unit testing (core-ram-test / core-pc-test), and
@@ -277,6 +278,7 @@ module pps41_core (
         .ram_addr(ram_addr), .a_in(a), .c_in(c_in_eff), .a_out_for_ioa(4'h0),
         .dbg_p_set(p_input), .p_set_en(1'b1),
         .r_output(io_r_output), .d_output(io_d_output),
+        .d_input(d_input),
         .skisl_skip(io_skisl_skip), .i2c_a(io_i2c_a), .ioa_a_result(io_ioa_a_unused)
     );
 

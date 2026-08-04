@@ -41,6 +41,38 @@ static void test_sos_bl_12_to_15_is_noop_not_interrupt_flag() {
     }
 }
 
+static void test_skisl_reads_the_d_input_pins_too() {
+    // SKISL tests (d_output | d_input), per MAME mm78op.cpp::op_skisl():
+    //   m_skip = !BIT((m_d_output | m_read_d()) & m_d_mask, bl)
+    // The D bus is bidirectional: the ROM releases a pin with ROS and then
+    // reads whatever is driving it externally. On this board that external
+    // driver is the PRO 1 / PRO 2 difficulty switch on DIO10.
+    //
+    // The real ROM does exactly that at 0x35E-0x371:
+    //   LB 10; EOB 2; L 0; AISK 15; (T skipped); ROS; SKISL; LAI 3 / LAI 4
+    // i.e. it selects pin 10, releases it, tests it, and loads a different
+    // constant for each switch position. Reading only d_output -- which is
+    // what this model did before -- pins the game to PRO 1 forever.
+    IoState io;
+    io_reset(io);
+    // Pin 10 released (not driven by the CPU) and the switch open: skip.
+    io.d_input = 0x000;
+    CHECK(io_skisl(io, 10) == true);
+    // Switch closed pulls DIO10 high: no skip, so the ROM takes the other
+    // branch and loads the other difficulty constant.
+    io.d_input = 0x400;
+    CHECK(io_skisl(io, 10) == false);
+    // d_output still ORs in: a pin the CPU is actively driving high reads
+    // high regardless of the external input.
+    io.d_input = 0x000;
+    io_sos(io, 10);
+    CHECK(io_skisl(io, 10) == false);
+    // An unrelated input bit must not disturb other pins.
+    io_reset(io);
+    io.d_input = 0x400;
+    CHECK(io_skisl(io, 3) == true);
+}
+
 static void test_skisl_skips_when_pin_clear() {
     IoState io; io_reset(io);
     CHECK(io_skisl(io, 0x03) == true);
@@ -93,6 +125,7 @@ int main() {
     test_ros_clears_d_pin();
     test_sos_invalid_b7_high_is_noop();
     test_sos_bl_12_to_15_is_noop_not_interrupt_flag();
+    test_skisl_reads_the_d_input_pins_too();
     test_skisl_skips_when_pin_clear();
     test_i2c_reads_upper_p_nibble_inverted();
     test_ioa_writes_lower_half_with_delayed_carry();
