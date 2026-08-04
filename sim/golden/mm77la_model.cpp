@@ -131,6 +131,22 @@ static bool op_is_tr(uint8_t op) { return (op & 0xF0) == 0x30; }
 static bool op_is_lb(uint8_t op) { return (op & 0xF0) == 0x10; }
 static bool op_is_eob(uint8_t op) { return (op & 0xF8) == 0x08; }
 
+// MAME execute_run()'s tail, run at the END of every iteration including
+// skipped ones:
+//     m_c_in = m_c_delay ? m_prev_c : m_c;
+//     m_c_delay = false;
+// Running it here rather than at the top of the next step() means
+// state().c_in is, immediately after step() returns, exactly the value the
+// NEXT instruction will observe. That matters for more than tidiness: while
+// this was published at the top of the following step, the MAME parity
+// tracer had to RECOMPUTE the logged c_in from c/prev_c, which meant a
+// c_in that was wrong but never consumed left the digest unchanged and the
+// parity test could not see it. See docs/follow-ups.md item 2.
+void Mm77laModel::commit_carry() {
+    st_.c_in = st_.c_delay ? st_.prev_c : st_.c;
+    st_.c_delay = false;
+}
+
 void Mm77laModel::step() {
     // Apply any carry-delay flag pending from a PRIOR instruction BEFORE this
     // instruction's own switch runs, so that if THIS instruction is itself
@@ -159,10 +175,9 @@ void Mm77laModel::step() {
     // The non-delayed case must also run every step (not just when c_delay
     // is set): that is what propagates a plain RC/SC into c_in, matching
     // MAME's op_rc()/op_sc(), which write only m_c.
-    st_.c_in = st_.c_delay ? st_.prev_c : st_.c;
-    st_.c_delay = false;
-    // Sample c for the NEXT step's delayed commit, after consuming this
-    // step's pending value above.
+    // Sample the carry as of the START of this instruction. A pending
+    // c_delay set by this instruction republishes THIS value, not the
+    // carry it computes -- see commit_carry() at the tail.
     st_.prev_c = st_.c;
 
     // RAM address delay (m_ram_delay, docs/initial-plan.md section 2 and
@@ -299,6 +314,7 @@ void Mm77laModel::step() {
         // test_skip_consumed_cycle_still_advances_display_window in
         // mm77la_model_test.cpp.
         update_display();
+        commit_carry();
         return;
     }
 
@@ -541,4 +557,5 @@ void Mm77laModel::step() {
     st_.prev_op = op;
 
     update_display();
+    commit_carry();
 }

@@ -26,11 +26,18 @@
 // a guard on that rule in the exact place the ROM depends on it.
 //
 // Caveat, stated plainly: this block is not reached by any input sequence
-// simulated so far (idle, all eight buttons, randomised fuzzing), and MAME
-// with the switch flipped produces identical traces over 30s of play. So
-// this proves the pin is wired and honoured, not that ordinary play uses
-// it. The entry point 0x35E is reached only via a TR-prefixed long jump,
-// which the static disassembler cannot resolve.
+// simulated so far -- idle, each of the eight buttons held or tapped, and
+// randomised fuzzing (40 trials x 3,000,000 steps). So this proves the pin
+// is wired and honoured, not that ordinary play uses it. The entry point
+// 0x35E is reached only via a TR-prefixed long jump, which the static
+// disassembler cannot resolve.
+//
+// A MAME cross-check was attempted and is NOT strong evidence: MAME's Lua
+// machine-frame notifier silently stops firing after ~175 frames (~2.9s),
+// so a script scheduling button presses past that point does nothing at
+// all. The comparison that appeared to cover "30s of rich play" in fact
+// only delivered its first two presses. Drive MAME inputs within the first
+// ~175 frames, or verify the presses actually landed.
 #include "mm77la_model.h"
 #include <cstdio>
 #include <cstdlib>

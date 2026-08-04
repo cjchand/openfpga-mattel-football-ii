@@ -115,10 +115,12 @@ uint64_t run(const std::vector<uint8_t>& rom, const Scenario& sc) {
         bool skipped = s.skip || s.skip_count > 0;
         if (!skipped) {
             if (retired > 0) {
-                // c_in as this instruction will observe it: step() commits
-                // any pending carry delay at its top, before dispatch.
-                // Mirrors MAME's `m_c_in = m_c_delay ? m_prev_c : m_c`.
-                unsigned c_in = s.c_delay ? s.prev_c : s.c;
+                // Read the model's own c_in rather than recomputing it.
+                // step() now publishes it at the END of the step, so this
+                // IS the value the instruction about to run will observe.
+                // Recomputing it here used to hide c_in bugs from this
+                // test entirely -- see docs/follow-ups.md item 2.
+                unsigned c_in = s.c_in;
                 char line[64];
                 std::snprintf(line, sizeof(line), "%03X A=%X B=%02X C=%X S=%X\n",
                               s.pc & 0x7FF, s.a & 0xF, s.b & 0x7F, c_in & 1u, s.s & 0xF);

@@ -87,6 +87,8 @@ private:
     // call, including the consumed_by_skip early-return path -- see the two
     // call sites in step() and the comment there for why.
     void update_display();
+    // Publishes c_in at the end of each step; see the definition.
+    void commit_carry();
 
     const uint8_t* rom_;
     size_t rom_size_;

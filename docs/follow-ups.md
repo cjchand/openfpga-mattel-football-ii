@@ -60,27 +60,22 @@ hardware.
 
 ---
 
-## 2. `mame-parity-test` cannot catch a `c_in` behavioural bug
+## 2. ~~`mame-parity-test` cannot catch a `c_in` behavioural bug~~ — FIXED
 
-`golden/mame_parity_test.cpp` builds its trace line by recomputing
-`c_in` as `s.c_delay ? s.prev_c : s.c`, because the model publishes `c_in`
-at the *top* of the following `step()`. That means the logged value is
-derived by the test rather than read from the model.
+**Resolved.** `step()`'s carry commit moved from the top of the following
+step to the end of the current one, matching MAME's `execute_run()` tail.
+`state().c_in` is now, immediately after `step()` returns, exactly the
+value the next instruction will observe, so the parity tracer reads it
+directly instead of recomputing it from `c`/`prev_c`.
 
-Consequence, verified by reintroducing the bug: replacing the carry commit
-with `st_.c_in = st_.c;` (no delay at all) leaves **`mame-parity-test`
-passing** and `gameplay-test` passing. Only the unit tests in
-`mm77la_model_test.cpp` catch it
-(`test_ac_carry_is_not_visible_until_two_instructions_later`,
-`test_back_to_back_ac_uses_the_older_carry`).
+Equivalence was checked by the digests: they are **unchanged**, which is
+what proves the refactor did not alter behaviour. And the blind spot is
+genuinely closed — removing the carry delay now fails **all 9** parity
+scenarios, where it previously passed silently.
 
-A wrong `c_in` that is never consumed before being corrected does not
-change the instruction stream, so the digest is unchanged.
-
-**Fix, if wanted:** move `step()`'s carry commit to the end of the step,
-as MAME's `execute_run()` does. Then `state().c_in` after `step()` is
-exactly what the next instruction will observe, the tracer can log it
-directly, and the parity digest genuinely covers carry semantics.
+`gameplay-test` still does not catch it, which is expected and recorded in
+that file: a wrong carry does not happen to break this particular opening
+sequence.
 
 ---
 
@@ -102,12 +97,33 @@ The pin is wired and honoured — `pro-switch-test` drives the ROM's own
 difficulty block and shows DIO10 selecting between `LAI 3` and `LAI 4`.
 
 What is unknown is which game state reaches that block. Its entry point
-(`0x35E`) is never hit by idle, any of the eight buttons, or randomised
-fuzzing (40 trials x 3M steps), and MAME with the switch genuinely flipped
-produces byte-identical traces over 30s of play. The entry is reached only
-via a `TR`-prefixed long jump, which unidasm's static per-page dump cannot
-resolve — so finding it needs either a stateful disassembly pass or
-interactive play in MAME.
+(`0x35E`) is never hit by idle, by any of the eight buttons, or by
+randomised fuzzing (40 trials x 3M steps) in the golden model. The entry is
+reached only via a `TR`-prefixed long jump, which unidasm's static per-page
+dump cannot resolve — so finding it needs either a stateful disassembly
+pass or interactive play in MAME.
+
+**Correction:** an earlier MAME cross-check described as "30s of rich play"
+was not. See the MAME tooling limitation below — the script's later presses
+never fired, so it exercised only Status and Kick.
+
+## 4a. MAME Lua gotcha: frame notifiers stop after ~175 frames
+
+`emu.add_machine_frame_notifier` stops being called after frame ~175
+(~2.9s of emulated time), regardless of `-video none`/`-video soft` and
+regardless of `-seconds_to_run`. The machine keeps running — a 14s run
+still reports 13 seconds and keeps retiring instructions — but no further
+frame callbacks arrive, silently.
+
+Consequences for anyone scripting MAME here:
+- **Drive all inputs within the first ~175 frames**, or verify the presses
+  actually landed rather than assuming.
+- The long CPU-parity traces are unaffected: they press at frame 60 and
+  are captured through the *debugger* (`-debugscript` + `trace`), which
+  keeps working for the full run.
+- Also beware `set_value()` on `PORT_CONFNAME` fields (e.g. Difficulty):
+  it silently does nothing. Use `field.user_value = <value>` and read it
+  back to confirm.
 
 ---
 
