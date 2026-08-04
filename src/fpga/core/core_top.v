@@ -588,6 +588,8 @@ end
     wire [7:0] p_input_w;
     synch_2 #(.WIDTH(8)) p_input_sync (p_input_74a, p_input_w, clk_core_12288, , );
 
+    wire [10:0] dbg_pc_w;
+    wire        dbg_tone_on_w, dbg_unimpl_w, dbg_int1l_w;
     wire [9:0]  r_output_w;
     wire [11:0] d_output_w;
     wire [1:0]  spk_level_w;
@@ -596,7 +598,7 @@ end
         .rst_n             ( reset_n ),
         .ce                ( core_ce ),
         .rom_addr          ( rom_addr_w ),
-        .pc                (  ),
+        .pc                ( dbg_pc_w ),
         .rom_data          ( rom_data_w ),
         .p_input           ( p_input_w ),
         .dbg_b_set         ( 1'b0 ),
@@ -613,18 +615,61 @@ end
         .stack0_out        (  ),
         .stack1_out        (  ),
         .skip_count_out    (  ),
-        .int1l_hit_out     (  ),
+        .int1l_hit_out     ( dbg_int1l_w ),
         .r_output_out      ( r_output_w ),
         .d_output_out      ( d_output_w ),
-        .tone_on_result    (  ),
+        .tone_on_result    ( dbg_tone_on_w ),
         .tone_freq_result  (  ),
         .spk_output_result ( spk_level_w ),
         .ios_state_result  (  ),
         .skisl_skip_out    (  ),
-        .unimpl_hit_out    (  ),
+        .unimpl_hit_out    ( dbg_unimpl_w ),
         .x_out             (  ),
         .s_out             (  )
     );
+
+    // On-screen flight recorder -- inert until a fault fires. See
+    // src/debug_probe.v for why this exists and what arms it.
+    wire        dbg_trig_w, dbg_cause_tone_w, dbg_cause_pc_w;
+    wire        dbg_unimpl_seen_w, dbg_int1l_seen_w;
+    wire [10:0] dbg_pc_latched_w;
+    debug_probe u_debug_probe (
+        .clk         ( clk_core_12288 ),
+        .rst_n       ( reset_n ),
+        .ce          ( core_ce ),
+        .pc          ( dbg_pc_w ),
+        .tone_on     ( dbg_tone_on_w ),
+        .unimpl_hit  ( dbg_unimpl_w ),
+        .int1l_hit   ( dbg_int1l_w ),
+        .trig        ( dbg_trig_w ),
+        .pc_latched  ( dbg_pc_latched_w ),
+        .cause_tone  ( dbg_cause_tone_w ),
+        .cause_pc    ( dbg_cause_pc_w ),
+        .unimpl_seen ( dbg_unimpl_seen_w ),
+        .int1l_seen  ( dbg_int1l_seen_w )
+    );
+
+    // 16 slots of 20px, drawn as a strip across the top of the screen when
+    // armed. Slot 0 is a marker, 1 = tone cause, 2 = pc cause,
+    // 3 = unimpl seen, 4 = int1l seen, 5..15 = the latched PC, MSB first.
+    wire [3:0] dbg_slot   = visible_x[7:4];
+    wire       dbg_in_bar = dbg_trig_w && (visible_y < 10'd16) && (visible_x < 10'd256);
+    reg        dbg_bit;
+    always @(*) begin
+        case (dbg_slot)
+            4'd0:    dbg_bit = 1'b1;
+            4'd1:    dbg_bit = dbg_cause_tone_w;
+            4'd2:    dbg_bit = dbg_cause_pc_w;
+            4'd3:    dbg_bit = dbg_unimpl_seen_w;
+            4'd4:    dbg_bit = dbg_int1l_seen_w;
+            default: dbg_bit = dbg_pc_latched_w[4'd15 - dbg_slot];
+        endcase
+    end
+    // White = 1, dark grey = 0, with a 2px black gutter between slots so the
+    // bit boundaries stay countable in a photograph.
+    wire [23:0] dbg_rgb = (visible_x[3:0] < 4'd2) ? 24'h000000
+                        : dbg_bit               ? 24'hFFFFFF
+                                                : 24'h202020;
 
     wire [9:0]   rowsel_w;
     wire [10:0]  rowdata_w;
@@ -761,7 +806,7 @@ always @(posedge clk_core_12288 or negedge reset_n) begin
                 // data enable. this is the active region of the line
                 vidout_de <= 1;
                 
-                vidout_rgb <= render_rgb_w;
+                vidout_rgb <= dbg_in_bar ? dbg_rgb : render_rgb_w;
                 
             end 
         end

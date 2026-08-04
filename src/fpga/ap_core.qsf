@@ -748,6 +748,7 @@ set_global_assignment -name VERILOG_FILE ../pps41_tone.v
 set_global_assignment -name VERILOG_FILE ../pps41_io.v
 set_global_assignment -name VERILOG_FILE ../pps41_display_mux.v
 set_global_assignment -name VERILOG_FILE ../pps41_display_pwm.v
+set_global_assignment -name VERILOG_FILE ../debug_probe.v
 set_global_assignment -name VERILOG_FILE ../ce_gen.v
 set_global_assignment -name VERILOG_FILE ../rom_loader.v
 set_global_assignment -name VERILOG_FILE ../audio_gen.v
