@@ -4,7 +4,7 @@ CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
 .PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test display-vectors-long-test test clean
-.PHONY: debug-probe-test mame-parity-test opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test video-renderer-test field-rom-test label-rom-test screenshot startup-state-test
+.PHONY: core-top-test debug-probe-test mame-parity-test opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test video-renderer-test field-rom-test label-rom-test screenshot startup-state-test
 
 lint-core:
 	$(VERILATOR) --lint-only -Wall --Wno-UNUSEDSIGNAL -I../src ../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v ../src/pps41_tone.v ../src/pps41_io.v
@@ -138,6 +138,28 @@ startup-state-test:
 	$(MAKE) -C obj_dir_startup_state -f Vpps41_core.mk
 	./obj_dir_startup_state/Vpps41_core "$(ROM)"
 
+# Integration tests for the APF glue layer (core_top.v), which had no
+# coverage at all until now -- and is where the reset-before-ROM and
+# p_input CDC bugs both lived. Altera megafunctions are replaced by the
+# behavioural stubs in stubs/. ROM_WAIT_MAX_P is shrunk so the timeout
+# path is reachable without simulating 55 million clocks.
+CORE_TOP_SRCS := ../src/fpga/core/core_top.v ../src/fpga/core/core_bridge_cmd.v \
+	../src/fpga/apf/common.v stubs/mf_pllbase.v stubs/mf_datatable.v \
+	../src/pps41_core.v ../src/pps41_decode.v ../src/pps41_alu.v ../src/pps41_opla.v \
+	../src/pps41_tone.v ../src/pps41_io.v ../src/pps41_display_mux.v \
+	../src/pps41_display_pwm.v ../src/video_renderer.v ../src/field_rom.v \
+	../src/label_rom.v ../src/rom_loader.v ../src/ce_gen.v ../src/audio_gen.v \
+	../src/debug_probe.v
+
+core-top-test:
+	$(VERILATOR) --cc $(CORE_TOP_SRCS) --exe core_top_tb.cpp \
+		-I../src -I../src/fpga/core -I../src/fpga/apf \
+		--top-module core_top --Mdir obj_dir_core_top \
+		--public-flat-rw -Wno-fatal \
+		-pvalue+ROM_WAIT_MAX_P=20000
+	$(MAKE) -C obj_dir_core_top -f Vcore_top.mk
+	cd ../src && ../sim/obj_dir_core_top/Vcore_top
+
 debug-probe-test:
 	$(VERILATOR) --cc ../src/debug_probe.v --exe debug_probe_tb.cpp \
 		--Mdir obj_dir_debug_probe -Wall --Wno-UNUSEDSIGNAL
@@ -235,7 +257,7 @@ display-vectors-long-test: core-test
 	done; \
 	echo "display-vectors-long-test: all display vectors PASS at 3200 cycles"
 
-test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test mame-parity-test debug-probe-test core-test vectors-test display-vectors-long-test video-renderer-test field-rom-test label-rom-test
+test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test mame-parity-test debug-probe-test core-top-test core-test vectors-test display-vectors-long-test video-renderer-test field-rom-test label-rom-test
 
 clean:
 	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test /tmp/mm77la_display_mux_test /tmp/mm77la_display_mux_rtl_test /tmp/mm77la_display_pwm_test

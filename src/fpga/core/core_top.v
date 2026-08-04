@@ -6,7 +6,9 @@
 
 `default_nettype none
 
-module core_top (
+module core_top #(
+    parameter [25:0] ROM_WAIT_MAX_P = 26'd55_000_000
+) (
 
 //
 // physical connections
@@ -563,7 +565,10 @@ core_bridge_cmd icb (
     // forever, and by ~0.75s a 1536-byte slot transfer has certainly
     // finished. rom_loader itself is deliberately NOT gated: it has to stay
     // live to receive the very writes being waited on.
-    localparam [25:0] ROM_WAIT_MAX = 26'd55_000_000; // ~0.75s at 74.25MHz
+    // Overridable so sim/core_top_tb.cpp can reach the timeout without
+    // simulating 55 million clocks (Verilator -pvalue+). Not a synthesis
+    // knob -- the default is the real value.
+    localparam [25:0] ROM_WAIT_MAX = ROM_WAIT_MAX_P[25:0]; // ~0.75s at 74.25MHz
     reg [25:0] rom_wait_count;
     reg        rom_loaded_74a;
     always @(posedge clk_74a) begin
