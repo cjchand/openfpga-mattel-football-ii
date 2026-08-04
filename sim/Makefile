@@ -3,7 +3,7 @@ VERILATOR := verilator
 CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
-.PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test vectors-test display-vectors-long-test test clean
+.PHONY: core-rom-lockstep-test lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test core-rom-lockstep-test vectors-test display-vectors-long-test test clean
 .PHONY: gameplay-test stimulus-test display-parity-test pro-switch-test core-top-test debug-probe-test mame-parity-test opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test video-renderer-test field-rom-test label-rom-test screenshot startup-state-test
 
 lint-core:
@@ -252,6 +252,18 @@ core-test:
 		-LDFLAGS "../obj_dir_core_dmux/Vpps41_display_mux__ALL.a ../obj_dir_core_dpwm/Vpps41_display_pwm__ALL.a"
 	$(MAKE) -C obj_dir_core -f Vpps41_core.mk
 
+# RTL-vs-golden lockstep on the REAL ROM, through a full opening sequence.
+#
+# This exists because the synthetic vectors below are 30 cycles each and are
+# not sensitive to a large class of RTL-only bugs: injecting a 3-bit -> 2-bit
+# EOB immediate into pps41_core.v alone leaves vectors-test passing, while
+# this catches it at cycle 148. Real ROM, real instruction mix, ~13 seconds
+# of chip time.
+core-rom-lockstep-test: core-test
+	@if [ ! -f "$(MAME_PARITY_ROM)" ]; then \
+		echo "core-rom-lockstep-test: need the game ROM at $(MAME_PARITY_ROM)"; exit 2; fi
+	./obj_dir_core/Vpps41_core "$(MAME_PARITY_ROM)" 1200000 stimulus/gameplay.txt
+
 vectors-test: core-test
 	@set -e; \
 	for v in vectors/*.bin; do \
@@ -281,7 +293,7 @@ display-vectors-long-test: core-test
 	done; \
 	echo "display-vectors-long-test: all display vectors PASS at 3200 cycles"
 
-test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test mame-parity-test gameplay-test stimulus-test display-parity-test pro-switch-test debug-probe-test core-top-test core-test vectors-test display-vectors-long-test video-renderer-test field-rom-test label-rom-test
+test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test mame-parity-test gameplay-test stimulus-test display-parity-test pro-switch-test debug-probe-test core-top-test core-test core-rom-lockstep-test vectors-test display-vectors-long-test video-renderer-test field-rom-test label-rom-test
 
 clean:
 	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test /tmp/mm77la_display_mux_test /tmp/mm77la_display_mux_rtl_test /tmp/mm77la_display_pwm_test

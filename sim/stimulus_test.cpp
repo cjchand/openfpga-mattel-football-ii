@@ -38,6 +38,16 @@ int main() {
 
     CHECK(load_stimulus(nullptr).empty(), "null path yields no events");
 
+    // '#' comments and blank lines are skipped, not treated as a parse
+    // failure that silently truncates the file.
+    { FILE* f = std::fopen(path, "w");
+      std::fprintf(f, "# leading comment\n\n100 01   # trailing comment\n200 80\n");
+      std::fclose(f); }
+    ev = load_stimulus(path);
+    CHECK(ev.size() == 2, "comments and blank lines skipped, both events parsed");
+    CHECK(ev.count(100) && ev[100] == 0x01, "event after a leading comment line");
+    CHECK(ev.count(200) && ev[200] == 0x80, "event after a trailing comment");
+
     if (failures == 0) { std::printf("PASS: stimulus_test\n"); return 0; }
     std::printf("%d FAILURE(S)\n", failures);
     return 1;
