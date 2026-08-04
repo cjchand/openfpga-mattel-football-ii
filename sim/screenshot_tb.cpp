@@ -18,20 +18,14 @@
 #include <map>
 #include <set>
 #include <vector>
+#include "stimulus.h"
 
 static void tick(Vpps41_core* dut) {
     dut->clk = 0; dut->eval();
     dut->clk = 1; dut->eval();
 }
 
-static std::map<long, uint8_t> load_stimulus(const char* path) {
-    std::map<long, uint8_t> events;
-    if (!path) return events;
-    std::ifstream f(path);
-    long cycle; unsigned val;
-    while (f >> cycle >> std::hex >> val) events[cycle] = static_cast<uint8_t>(val);
-    return events;
-}
+// load_stimulus lives in stimulus.h -- see there for why.
 
 int main(int argc, char** argv) {
     if (argc != 4 && argc != 5) {
