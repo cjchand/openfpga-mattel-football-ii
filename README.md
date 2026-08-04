@@ -17,8 +17,8 @@ Football II runs on fundamentally different silicon. See
    exactly `Cores/cjchand.Mattel Football II` or the Pocket will fail to
    load it ("Load error in 'core': General Error").
 3. Place your ROM dump on the SD card at
-   `Assets/mattel_football_ii/common/b8000-12.bin` (create the
-   `mattel_football_ii` and `common` folders if they don't already exist;
+   `Assets/mattel_fb_ii/common/b8000-12.bin` (create the
+   `mattel_fb_ii` and `common` folders if they don't already exist;
    the filename must be exactly `b8000-12.bin` per this core's
    `data.json` dataslot definition).
 4. Boot the core from the Pocket's core list.

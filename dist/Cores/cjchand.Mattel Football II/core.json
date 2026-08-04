@@ -2,7 +2,7 @@
     "core": {
         "magic": "APF_VER_1",
         "metadata": {
-            "platform_ids": ["mattel_football_ii"],
+            "platform_ids": ["mattel_fb_ii"],
             "shortname": "Mattel Football II",
             "description": "Mattel Electronic Football II (1978) for the Analogue Pocket.",
             "author": "cjchand",

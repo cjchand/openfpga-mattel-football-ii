@@ -26,10 +26,14 @@ struct Loader {
         d.bridge_wr = 0;
     }
 
-    // load a 1536-byte image via 384 word writes, little-endian within each word
+    // load a 1536-byte image via 384 word writes. Big-endian within each
+    // word (file byte 0 -> bits[31:24]) -- this is how APF actually packs
+    // bridge writes on real hardware (confirmed in the sibling FB1
+    // project via a debug readback); rom_loader.v's byte_sel extraction
+    // is reversed to match.
     void load(const uint8_t* rom) {
         for (int w = 0; w < 384; w++) {
-            uint32_t word = rom[w*4] | (rom[w*4+1] << 8) | (rom[w*4+2] << 16) | (rom[w*4+3] << 24);
+            uint32_t word = (rom[w*4] << 24) | (rom[w*4+1] << 16) | (rom[w*4+2] << 8) | rom[w*4+3];
             write_word(w, word);
         }
     }

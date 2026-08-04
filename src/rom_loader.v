@@ -33,5 +33,11 @@ module rom_loader #(
     wire [8:0] rd_word_idx = dense_addr[10:2];
     wire [1:0] byte_sel = dense_addr[1:0];
 
-    assign rom_data = mem[rd_word_idx][byte_sel*8 +: 8];
+    // APF packs each bridge write big-endian (file byte 0 of a 4-byte
+    // group lands in bits[31:24], not bits[7:0]) -- confirmed on real
+    // hardware in the sibling FB1 project via a debug readback: byte_sel==0
+    // was returning file byte 3 instead of file byte 0. Select from the
+    // high end to match.
+    wire [1:0] byte_sel_rev = ~byte_sel;
+    assign rom_data = mem[rd_word_idx][byte_sel_rev*8 +: 8];
 endmodule
