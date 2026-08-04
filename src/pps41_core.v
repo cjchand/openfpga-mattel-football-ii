@@ -69,6 +69,9 @@ module pps41_core (
     reg [3:0]  a;
     reg [3:0]  x;           // written by LXA/XAX; carried for parity with golden state
     reg        c, c_in, c_delay;
+    reg        prev_c;   // c as of the START of the previous instruction (MAME's
+                         // m_prev_c); what a pending c_delay republishes into c_in.
+                         // See c_in_eff.
     reg [3:0]  s;            // written by XAS (serial-out pin not modeled); carried for parity with golden state
     reg [10:0] stack0, stack1;
     reg        skip;
@@ -188,9 +191,33 @@ module pps41_core (
     end
 
     // c_in promotion: applied unconditionally at the "top" of every cycle's
-    // logic (Task 6/13 fix -- must NOT be gated by which opcode runs this
-    // cycle, and must be visible to THIS cycle's own AC/ACSK/SKNC reads).
-    wire c_in_eff = c_delay ? c : c_in;
+    // logic (must NOT be gated by which opcode runs this cycle, and must be
+    // visible to THIS cycle's own AC/ACSK/SKNC reads).
+    //
+    // A pending c_delay republishes `prev_c` -- the carry as it was at the
+    // START of the instruction that set the delay -- NOT that instruction's
+    // freshly computed carry. This is MAME execute_run()'s tail verbatim:
+    //     m_c_in = m_c_delay ? m_prev_c : m_c;
+    // so an AC/ACSK's new carry stays invisible for one more instruction and
+    // only lands on the one after. Promoting `c` here instead publishes it
+    // one instruction too early, which is enough to send SKNC-driven control
+    // flow down the wrong branch.
+    wire c_in_eff = c_delay ? prev_c : c;
+
+    // MM78-tier opcode-family predicates over the retired-opcode history,
+    // matching MAME mm78.h's op_is_lb()/op_is_eob() and mm76.h's op_is_tr().
+    // The `prev2_op is not a TR prefix` guards keep an operand byte of a
+    // multi-byte instruction from being mistaken for a real LB.
+    wire prev_is_lb   = (prev_op[7:4]  == 4'h1) && (prev2_op[7:4] != 4'h3);
+    wire prev2_is_lb  = (prev2_op[7:4] == 4'h1) && (prev3_op[7:4] != 4'h3);
+    wire prev_is_eob  = (prev_op[7:3]  == 5'b00001);
+    wire prev2_is_eob = (prev2_op[7:3] == 5'b00001);
+    // "successive LB/EOB are ignored, except after the first executed LB"
+    // (MAME mm76op.cpp::op_lb() / op_eob()). The first_lb exception is what
+    // makes the common LB;EOB pair apply both halves.
+    wire eob_first_lb = prev_is_lb && !prev2_is_lb && !prev2_is_eob;
+    wire eob_applies  = (!prev_is_lb && !prev_is_eob) || eob_first_lb;
+    wire lb_applies   = !prev_is_lb && !prev_is_eob;
 
     wire [3:0] alu_result;
     wire       alu_carry_out;
@@ -260,6 +287,7 @@ module pps41_core (
     reg [3:0]  next_x;
     reg        next_sag;
     reg        next_c, next_c_in, next_c_delay;
+    reg        next_prev_c;
     reg [3:0]  next_s;
     reg [10:0] next_stack0, next_stack1;
     reg        next_skip;
@@ -315,7 +343,9 @@ module pps41_core (
         next_x           = x;
         next_sag         = 1'b0;
         next_c           = c;
-        next_c_in        = c_in_eff;   // promoted every cycle, per the Task 6 fix
+        next_c_in        = c_in_eff;   // promoted every cycle
+        next_prev_c      = c;          // sample the pre-dispatch carry for the next cycle's
+                                       // delayed commit, after c_in_eff consumed this one
         next_c_delay     = 1'b0;
         next_s           = s;
         next_stack0      = stack0;
@@ -387,8 +417,8 @@ module pps41_core (
                 endcase
             end else begin
                 case (op_hi)
-                    4'h1: begin // LB x
-                        if (prev_op[7:4] != 4'h1) next_b = {3'b0, op[3:0]};
+                    4'h1: begin // LB x -- "successive LB/EOB are ignored"
+                        if (lb_applies) next_b = {3'b0, op[3:0]};
                     end
                     4'h3: ; // TR prefix, no direct effect
                     4'h4: begin // LAI x
@@ -416,15 +446,15 @@ module pps41_core (
                     end
                     default: begin
                         case (op_fc)
-                            8'h08, 8'h0C: begin // EOB x -- reachable via BOTH the 0x08-0x0B and
-                                // 0x0C-0x0F byte ranges (MAME mm78.cpp: `case 0x08: case 0x0c:
-                                // op_eob();`), both using the low 2 bits as the immediate.
-                                // Phase 1 only handled 0x08; the real ROM hits 0x0C-range EOB
-                                // bytes within its first ~150 cycles (found via Phase 2's
-                                // unimpl_hit instrumentation) -- this was a genuine bug, not a
-                                // Phase-2-scope opcode. Suppression covers the whole 0x08-0x0F
-                                // range (prev_op[7:3]==5'b00001), not just the 0x08 sub-group.
-                                if (prev_op[7:3] != 5'b00001) next_b = b_reg ^ {1'b0, op_lo2, 4'b0};
+                            8'h08, 8'h0C: begin // EOB x -- opcode range 0x08-0x0F (MAME mm78.h:
+                                // op_is_eob(op) == ((op & 0xf8) == 0x08)), XORing Bu with a
+                                // THREE-bit immediate: MAME mm76op.cpp::op_eob() does
+                                // `m_b ^= m_op << 4 & m_datamask`, and m_datamask is 0x7F for
+                                // this chip's 7-bit B. Decoding only 2 bits made `EOB 4`
+                                // (opcode 0x0C) a silent no-op, leaving RAM banks 4-7
+                                // unreachable -- the ROM's own RAM-clearing init loop uses
+                                // exactly that instruction to cross from banks 0-3 into 4-7.
+                                if (eob_applies) next_b = b_reg ^ {op[2:0], 4'b0};
                             end
                             8'h20: begin // SB x
                                 next_ram_wr_en   = 1'b1;
@@ -471,8 +501,14 @@ module pps41_core (
                                     8'h01: next_skip = io_skisl_skip; // SKISL
                                     8'h02: next_skip = (c_in_eff == 1'b0); // SKNC
                                     8'h04: next_int1l_hit = 1'b1; // INT1L -- flagged no-op
-                                    8'h05: begin next_c = 1'b0; next_c_in = 1'b0; end // RC -- immediate (no c_delay), docs/initial-plan.md: "RC: carry = 0"
-                                    8'h06: begin next_c = 1'b1; next_c_in = 1'b1; end // SC -- immediate (no c_delay), docs/initial-plan.md: "SC: carry = 1"
+                                    // RC/SC write only c, exactly as MAME's op_rc()/op_sc().
+                                    // They set no c_delay, so c_in_eff picks the new value up
+                                    // on the very next cycle -- which is where the next
+                                    // instruction reads it. Writing next_c_in here too would
+                                    // be redundant and would obscure that c_in is published
+                                    // only by c_in_eff.
+                                    8'h05: next_c = 1'b0; // RC
+                                    8'h06: next_c = 1'b1; // SC
                                     8'h07: next_sag = 1'b1; // SAG
                                     8'h2C: next_tab_pending = 1'b1; // TAB -- delayed fire
                                     8'h2D: ; // IOS -- side effect handled entirely by u_tone (ios_fire)
@@ -560,7 +596,15 @@ module pps41_core (
             end
         end
 
-        next_prev_op  = op;
+        // A byte consumed by a skip enters the prev_op history as a NOP
+        // (0x00), not as its own value -- MAME's execute_run() does exactly
+        // this ("m_op = 0; // fake nop") after testing the real byte for a
+        // TR prefix. `continue_skip` above already used the true byte, so
+        // zeroing here is safe. This matters because the LAI/LB/EOB
+        // "successive ... are ignored" coalescing rules below are decided
+        // solely from prev_op: a skipped byte that happens to look like one
+        // of those opcodes would otherwise suppress the next genuine one.
+        next_prev_op  = skip_eff ? 8'h00 : op;
         next_prev2_op = prev_op;
         next_prev3_op = prev2_op;
     end
@@ -582,6 +626,7 @@ module pps41_core (
             c           <= 1'b0;
             c_in        <= 1'b0;
             c_delay     <= 1'b0;
+            prev_c      <= 1'b0;
             s           <= 4'h0;
             stack0      <= 11'h0;
             stack1      <= 11'h0;
@@ -605,6 +650,7 @@ module pps41_core (
             c           <= next_c;
             c_in        <= next_c_in;
             c_delay     <= next_c_delay;
+            prev_c      <= next_prev_c;
             s           <= next_s;
             stack0      <= next_stack0;
             stack1      <= next_stack1;

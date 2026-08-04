@@ -125,6 +125,11 @@ void Mm77laModel::increment_pc() {
 
 // static helper: is `op` a TR prefix byte (0x30-0x3F)?
 static bool op_is_tr(uint8_t op) { return (op & 0xF0) == 0x30; }
+// MM78-tier opcode-family predicates, matching MAME mm78.h's op_is_lb() /
+// op_is_eob() overrides exactly. Used only by the LB/EOB coalescing rules
+// below, which need to inspect the previous few opcode bytes.
+static bool op_is_lb(uint8_t op) { return (op & 0xF0) == 0x10; }
+static bool op_is_eob(uint8_t op) { return (op & 0xF8) == 0x08; }
 
 void Mm77laModel::step() {
     // Apply any carry-delay flag pending from a PRIOR instruction BEFORE this
@@ -135,10 +140,30 @@ void Mm77laModel::step() {
     // test_back_to_back_ac_does_not_lose_first_pending_carry). This placement
     // (top of step(), before the switch) is the Task 6 fix; do NOT move this
     // to the bottom of the function.
-    if (st_.c_delay) {
-        st_.c_in = st_.c;
-        st_.c_delay = false;
-    }
+    // Carry commit. This block is MAME execute_run()'s tail:
+    //     m_c_in = m_c_delay ? m_prev_c : m_c;
+    //     m_c_delay = false;
+    // run at the END of each instruction. We run it at the TOP of the next
+    // step() instead, which is the same point in the instruction stream
+    // (nothing observes c_in in between) and keeps step() single-entry.
+    //
+    // The essential part is `m_prev_c`, not the placement: an instruction
+    // that sets c_delay (AC/ACSK) republishes the carry as it was BEFORE
+    // that instruction ran, so its freshly-computed carry stays invisible
+    // for one more instruction and only lands on the step after. Committing
+    // st_.c here instead -- which is what this model did previously -- makes
+    // the new carry visible one instruction too early, and that single
+    // off-by-one is enough to send SKNC-driven control flow down the wrong
+    // branch. See test_ac_carry_is_not_visible_until_two_instructions_later.
+    //
+    // The non-delayed case must also run every step (not just when c_delay
+    // is set): that is what propagates a plain RC/SC into c_in, matching
+    // MAME's op_rc()/op_sc(), which write only m_c.
+    st_.c_in = st_.c_delay ? st_.prev_c : st_.c;
+    st_.c_delay = false;
+    // Sample c for the NEXT step's delayed commit, after consuming this
+    // step's pending value above.
+    st_.prev_c = st_.c;
 
     // RAM address delay (m_ram_delay, docs/initial-plan.md section 2 and
     // section 3's "RAM addressing register (B)" note): XAB/XDSK/XNSK change
@@ -232,7 +257,16 @@ void Mm77laModel::step() {
         // last-byte bookkeeping needed.
         st_.prev3_op = st_.prev2_op;
         st_.prev2_op = st_.prev_op;
-        st_.prev_op = op;
+        // A skipped byte enters the history as a NOP, not as its own value.
+        // MAME does this explicitly ("m_op = 0; // fake nop") right after
+        // testing the real byte for a TR prefix, so the TR-continuation
+        // check below still sees the true byte while everything downstream
+        // sees 0x00. Recording the real byte here instead lets a skipped
+        // byte that happens to look like a LAI/LB/EOB wrongly trigger those
+        // opcodes' "successive ... are ignored" coalescing rules against the
+        // next genuine instruction. See
+        // test_skipped_byte_enters_prev_op_history_as_a_nop.
+        st_.prev_op = 0x00;
         if (op_is_tr(op)) {
             // Skip continues into the NEXT step() call to consume the
             // remaining byte(s) of this multi-byte instruction.
@@ -324,7 +358,12 @@ void Mm77laModel::step() {
         }
     } else {
         switch (op & 0xF0) {
-            case 0x10: { bool suppressed = (st_.prev_op & 0xF0) == 0x10; if (!suppressed) st_.b = op & 0xF; break; } // LB x
+            case 0x10: { // LB x -- "successive LB/EOB are ignored" (MAME mm76op.cpp::op_lb())
+                bool prev_is_lb  = op_is_lb(st_.prev_op) && !op_is_tr(st_.prev2_op);
+                bool prev_is_eob = op_is_eob(st_.prev_op);
+                if (!prev_is_lb && !prev_is_eob) st_.b = op & 0xF;
+                break;
+            }
             case 0x30: break; // TR prefix, no direct effect
             case 0x40: { bool suppressed = (st_.prev_op & 0xF0) == 0x40; if (!suppressed) st_.a = op & 0xF; break; } // LAI x
             case 0x60: { // AISK x (x!=0); I1SK (x==0)
@@ -357,15 +396,27 @@ void Mm77laModel::step() {
             }
             default: {
                 switch (op & 0xFC) {
-                    case 0x08: case 0x0C: { // EOB x -- reachable via BOTH the 0x08-0x0B and
-                        // 0x0C-0x0F byte ranges (MAME mm78.cpp: `case 0x08: case 0x0c:
-                        // op_eob();`), both using the low 2 bits as the immediate. Phase 1
-                        // only handled 0x08; the real ROM hits 0x0C-range EOB bytes within
-                        // its first ~150 cycles (found via Phase 2's unimpl_hit
-                        // instrumentation) -- this was a genuine bug, not a Phase-2-scope
-                        // opcode. Suppression covers the whole 0x08-0x0F range, not just 0x08.
-                        bool suppressed = (st_.prev_op & 0xF8) == 0x08;
-                        if (!suppressed) st_.b = static_cast<uint8_t>(st_.b ^ ((op & 0x3) << 4));
+                    case 0x08: case 0x0C: { // EOB x -- opcode range 0x08-0x0F (MAME mm78.h:
+                        // op_is_eob(op) == ((op & 0xf8) == 0x08)), with a THREE-bit
+                        // immediate XORed into Bu: MAME mm76op.cpp::op_eob() does
+                        // `m_b ^= m_op << 4 & m_datamask`, and m_datamask is 0x7F for this
+                        // chip's 7-bit B. Decoding the immediate as only 2 bits made
+                        // `EOB 4` (opcode 0x0C) a silent no-op, which left RAM banks 4-7
+                        // unreachable -- the ROM's own RAM-clearing init loop uses exactly
+                        // that instruction to cross from banks 0-3 into 4-7. See
+                        // test_eob_immediate_is_three_bits_wide.
+                        //
+                        // Coalescing ("successive LB/EOB are ignored, except after the
+                        // first executed LB") is transcribed from op_eob()'s guard
+                        // verbatim; the `first_lb` exception is what makes the common
+                        // LB;EOB pair apply both halves.
+                        bool prev_is_lb   = op_is_lb(st_.prev_op) && !op_is_tr(st_.prev2_op);
+                        bool prev2_is_lb  = op_is_lb(st_.prev2_op) && !op_is_tr(st_.prev3_op);
+                        bool prev_is_eob  = op_is_eob(st_.prev_op);
+                        bool prev2_is_eob = op_is_eob(st_.prev2_op);
+                        bool first_lb = prev_is_lb && !prev2_is_lb && !prev2_is_eob;
+                        if ((!prev_is_lb && !prev_is_eob) || first_lb)
+                            st_.b = static_cast<uint8_t>((st_.b ^ ((op & 0x7) << 4)) & 0x7F);
                         break;
                     }
                     case 0x20: { uint8_t val = ram_read(static_cast<uint8_t>(ram_addr)); ram_write(static_cast<uint8_t>(ram_addr), val | (1 << (op & 0x3))); break; } // SB x
@@ -406,8 +457,14 @@ void Mm77laModel::step() {
                             case 0x00: break; // NOP
                             case 0x02: st_.skip = (st_.c_in == 0); break; // SKNC
                             case 0x04: st_.int1l_hit = true; break; // INT1L -- flagged no-op
-                            case 0x05: st_.c = 0; st_.c_in = 0; break; // RC -- docs/initial-plan.md: "RC: carry = 0", no c_delay mentioned (unlike AC/ACSK) so both c and c_in update immediately, same cycle
-                            case 0x06: st_.c = 1; st_.c_in = 1; break; // SC -- docs/initial-plan.md: "SC: carry = 1", immediate like RC
+                            // RC/SC write only c, exactly as MAME's op_rc()/op_sc() do.
+                            // They set no c_delay, so step()'s carry-commit block
+                            // propagates the new value into c_in at the start of the very
+                            // next instruction -- which is where the next instruction reads
+                            // it. Writing c_in here too would be redundant, and would hide
+                            // the fact that c_in is only ever published by that one block.
+                            case 0x05: st_.c = 0; break; // RC
+                            case 0x06: st_.c = 1; break; // SC
                             case 0x07: st_.sag = true; break; // SAG
                             case 0x2C: st_.tab_pending = true; break; // TAB -- delayed fire
                             case 0x2E: { st_.pc = st_.stack[0] & 0x7FF; st_.stack[0] = st_.stack[1]; st_.skip = true; break; } // RTSK

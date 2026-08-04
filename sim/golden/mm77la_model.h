@@ -17,6 +17,9 @@ struct Mm77laState {
     uint8_t x = 0;            // 4-bit secondary register, written by LXA/XAX
     uint8_t c = 0;              // 1-bit immediate carry
     uint8_t c_in = 0;            // 1-bit delayed carry, what SKNC actually reads
+    uint8_t prev_c = 0;           // c as of the START of the previous instruction; this is
+                                   // what a pending c_delay republishes into c_in (MAME's
+                                   // m_prev_c). See step()'s carry-commit block.
     uint8_t s = 0;                 // 4-bit serial shift register, written by XAS (serial-out pin not modeled -- unused by this game, see mm77la_model.cpp's XAS case)
     std::array<uint16_t, 2> stack{}; // 2-level return address stack, stack[0] = top
     bool skip = false;

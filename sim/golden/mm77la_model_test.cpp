@@ -335,6 +335,119 @@ static void test_lb_then_eob_coalesce_as_a_pair() {
     CHECK(m.state().b == (0x5 ^ 0x20));
 }
 
+static void test_skipped_byte_enters_prev_op_history_as_a_nop() {
+    // A byte consumed by a skip must enter the prev_op history as 0x00, not
+    // as its own value. MAME does this explicitly: in execute_run(), a
+    // skipped opcode is replaced with `m_op = 0; // fake nop` before the
+    // next iteration shifts it into m_prev_op.
+    //
+    // It matters because the LAI/LB/EOB coalescing rules ("successive LAI
+    // are ignored") are decided purely by inspecting prev_op. If a skipped
+    // byte keeps its real value and happens to look like a LAI, it silently
+    // suppresses the next genuine LAI.
+    //
+    // That is a real path in this ROM, not a contrived one: at 0x02D a
+    // SKBF skips the byte 0x45, and the instruction after it is a genuine
+    // `LAI 6` (0x46) at 0x03B. MAME loads A=6 there; recording the skipped
+    // 0x45 as prev_op suppresses it and leaves A stale.
+    uint8_t rom[3] = {0x7F, 0x45, 0x46}; // SKMEA; (LAI 5, skipped); LAI 6
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_pc(0);
+    m.debug_set_a(0x0);
+    m.debug_set_b(0x00);
+    m.debug_ram_write(0x00, 0x0); // A == RAM -> SKMEA skips
+    m.step(); // SKMEA
+    CHECK(m.state().skip == true);
+    m.step(); // 0x45 consumed as a skip -- must NOT count as a LAI
+    CHECK(m.state().prev_op == 0x00);
+    m.step(); // LAI 6 must actually load A
+    CHECK(m.state().a == 0x6);
+}
+
+static void test_eob_immediate_is_three_bits_wide() {
+    // EOB x XORs Bu with a THREE-bit immediate (MAME mm76op.cpp::op_eob():
+    // `m_b ^= m_op << 4 & m_datamask`, where m_datamask is 0x7F for this
+    // chip's 7-bit B). The opcode range is 0x08-0x0F (op_is_eob(op) is
+    // `(op & 0xf8) == 0x08`), so bit 2 of the immediate is real and reaches
+    // B bit 6 -- it is NOT a 2-bit field.
+    //
+    // This is the bug that made RAM banks 4-7 unreachable: EOB 4 (opcode
+    // 0x0C) was decoded with a 2-bit immediate, XORing B with 0 -- a silent
+    // no-op. The ROM's own RAM-clearing init loop uses exactly this
+    // instruction to cross from banks 0-3 into banks 4-7, confirmed against
+    // a real MAME mfootb2 trace (instruction 147 from reset: `0F:14: EOB 4`
+    // takes B from 0x00 to 0x40).
+    for (uint8_t imm = 0; imm < 8; imm++) {
+        uint8_t rom[2] = {0x00, static_cast<uint8_t>(0x08 | imm)}; // NOP; EOB imm
+        Mm77laModel m(rom, sizeof(rom));
+        m.reset();
+        m.debug_set_pc(0);
+        m.step();
+        m.step();
+        CHECK(m.state().b == static_cast<uint8_t>((imm << 4) & 0x7F));
+    }
+}
+
+static void test_eob_after_eob_is_suppressed() {
+    // "successive LB/EOB are ignored" -- a second EOB immediately after a
+    // non-suppressed EOB does not apply. MAME: op_eob()'s guard includes
+    // `!op_is_eob(m_prev_op)`.
+    uint8_t rom[3] = {0x00, 0x0C, 0x0C}; // NOP; EOB 4; EOB 4
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_pc(0);
+    m.step();
+    m.step();
+    CHECK(m.state().b == 0x40);
+    m.step(); // suppressed -- must NOT toggle back to 0x00
+    CHECK(m.state().b == 0x40);
+}
+
+static void test_lb_after_eob_is_suppressed() {
+    // MAME op_lb()'s guard includes `!op_is_eob(m_prev_op)`: an LB directly
+    // after an EOB is suppressed. Our decoder previously only suppressed LB
+    // after another LB, so this case wrongly clobbered B.
+    uint8_t rom[3] = {0x00, 0x0C, 0x15}; // NOP; EOB 4; LB 5
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_pc(0);
+    m.step();
+    m.step();
+    CHECK(m.state().b == 0x40);
+    m.step(); // suppressed -- B must stay 0x40, not become 0x05
+    CHECK(m.state().b == 0x40);
+}
+
+static void test_eob_applies_after_the_first_lb_of_a_run() {
+    // MAME's `first_lb` exception: EOB is normally suppressed after an LB,
+    // but NOT when that LB is the first of its run. LB;EOB therefore both
+    // apply, while LB;LB;EOB suppresses the EOB (the second LB is itself
+    // suppressed, and the EOB sees a non-first LB).
+    {
+        uint8_t rom[3] = {0x00, 0x15, 0x0C}; // NOP; LB 5; EOB 4
+        Mm77laModel m(rom, sizeof(rom));
+        m.reset();
+        m.debug_set_pc(0);
+        m.step(); m.step();
+        CHECK(m.state().b == 0x05);
+        m.step();
+        CHECK(m.state().b == 0x45); // first_lb exception -> EOB applies
+    }
+    {
+        uint8_t rom[4] = {0x00, 0x15, 0x13, 0x0C}; // NOP; LB 5; LB 3; EOB 4
+        Mm77laModel m(rom, sizeof(rom));
+        m.reset();
+        m.debug_set_pc(0);
+        m.step(); m.step();
+        CHECK(m.state().b == 0x05);
+        m.step();
+        CHECK(m.state().b == 0x05); // second LB suppressed
+        m.step();
+        CHECK(m.state().b == 0x05); // EOB suppressed (prev LB was not first)
+    }
+}
+
 static void test_successive_lai_coalescing_suppresses_repeat() {
     // Per docs/initial-plan.md §5.2: "LAI x: A = x, UNLESS prev op was a
     // non-suppressed LAI." Two back-to-back LAI's: the second is suppressed
@@ -374,14 +487,47 @@ static void test_ac_carry_visible_to_sknc_only_after_one_instruction_delay() {
     CHECK(m.state().skip == false); // c_in should now be 1 -> SKNC (skip if carry==0) does NOT skip
 }
 
-static void test_back_to_back_ac_does_not_lose_first_pending_carry() {
-    // AC; AC; NOP; SKNC. The first AC produces carry1=1 (0xF+0x2 overflows).
-    // Because c_in updates at the START of the instruction AFTER the AC that
-    // set it (not the end of that AC's own step()), the second AC's own
-    // addition already sees c_in==carry1, and c_in visibly becomes carry1
-    // immediately after the second AC's step() call -- carry1 must not be
-    // silently overwritten/lost when the second AC sets its own (different)
-    // pending carry.
+static void test_ac_carry_is_not_visible_until_two_instructions_later() {
+    // SC; AC; SKNC; NOP; SKNC.
+    //
+    // AC's freshly-computed carry is NOT visible to the instruction that
+    // immediately follows it -- that instruction still observes the carry as
+    // it was BEFORE the AC. Per MAME's execute_run() tail:
+    //     m_c_in = m_c_delay ? m_prev_c : m_c;
+    // where m_prev_c is m_c sampled at the START of the current instruction.
+    // So AC's own iteration republishes the pre-AC carry, and only the
+    // iteration after that publishes the new one.
+    //
+    // Verified against a real MAME mfootb2 trace: at traced instruction 510
+    // the ROM runs `AC` with carry 1 (just set by SC) and computes a new
+    // carry of 0, yet the following `XDSK` is still logged with C=1 -- the
+    // new carry only appears one instruction later.
+    uint8_t rom[5] = {0x06, 0x7C, 0x02, 0x00, 0x02}; // SC; AC; SKNC; NOP; SKNC
+    Mm77laModel m(rom, sizeof(rom));
+    m.reset();
+    m.debug_set_pc(0);
+    m.debug_set_a(0x0);
+    m.debug_set_b(0x00);
+    m.debug_ram_write(0x00, 0x0); // 0x0 + 0x0 + c_in(1) = 0x1 -> new carry 0
+    m.step(); // SC -> carry 1
+    m.step(); // AC  -> A=1, new carry 0 (pending)
+    CHECK(m.state().a == 0x1);
+    m.step(); // SKNC still sees the PRE-AC carry (1) -> must NOT skip
+    CHECK(m.state().skip == false);
+    m.step(); // NOP -- AC's new carry (0) becomes visible from here on
+    m.step(); // SKNC now sees carry 0 -> skips
+    CHECK(m.state().skip == true);
+}
+
+static void test_back_to_back_ac_uses_the_older_carry() {
+    // AC; AC; NOP; SKNC, with A=0xF and RAM[0]=0x2 so the first AC overflows
+    // (carry1 = 1). Because AC's carry takes two instructions to become
+    // visible, the SECOND AC still adds with the ORIGINAL carry (0), not
+    // carry1 -- giving A = 0x1 + 0x2 + 0 = 0x3.
+    //
+    // (This previously asserted A == 0x4, i.e. the second AC seeing carry1
+    // immediately. That encoded our own off-by-one carry-delay bug rather
+    // than the hardware's behaviour; MAME produces 0x3 here.)
     uint8_t rom[4] = {0x7C, 0x7C, 0x00, 0x02}; // AC; AC; NOP; SKNC
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
@@ -389,14 +535,16 @@ static void test_back_to_back_ac_does_not_lose_first_pending_carry() {
     m.debug_set_a(0xF);
     m.debug_set_b(0x00);
     m.debug_ram_write(0x00, 0x2); // 0xF + 0x2 + c_in(0) = 0x11 -> carry1 = 1, A becomes 0x1
-    m.step(); // AC #1: c_in still 0 (not yet visible)
-    CHECK(m.state().c_in == 0);
-    m.step(); // AC #2: at its top, c_in becomes carry1 (1); its own add uses
-              // A=0x1 + RAM[0]=0x2 + c_in=1 = 0x4 -> carry2 = 0 (no overflow)
-    CHECK(m.state().c_in == 1); // carry1 visible now, not lost
-    CHECK(m.state().a == 0x4);
-    m.step(); // NOP: at its top, c_in becomes carry2 (0)
-    m.step(); // SKNC reads c_in == 0 -> skip == true
+    m.step(); // AC #1
+    CHECK(m.state().a == 0x1);
+    m.step(); // AC #2 -- adds with the original carry 0, not carry1
+    CHECK(m.state().a == 0x3);
+    // carry1 (=1) is what the NOP observes; by the time SKNC runs, the second
+    // AC's own carry (carry2 = 0, since 0x1+0x2+0 does not overflow) has
+    // taken its place -- so SKNC skips. Cross-checked against MAME's
+    // execute_run() tail step by step.
+    m.step(); // NOP: observes carry1
+    m.step(); // SKNC: observes carry2 == 0 -> skips
     CHECK(m.state().skip == true);
 }
 
@@ -550,34 +698,43 @@ static void test_tmlb_dispatches_across_full_high_nibble_range() {
 }
 
 static void test_rc_clears_carry_immediately() {
-    // Important #4: RC (0x05) sets carry = 0. docs/initial-plan.md's MM76
-    // tier section lists "RC: carry = 0" with no mention of c_delay (unlike
-    // AC/ACSK, which explicitly say "carry update is DELAYED one cycle") --
-    // so both c and c_in update the SAME cycle, immediately.
-    // Force c/c_in to 1 first via SC, then RC should clear both immediately.
-    uint8_t rom2[2] = {0x06, 0x05}; // SC; RC
+    // Important #4: RC (0x05) sets carry = 0, with none of AC/ACSK's
+    // one-instruction delay -- a SKNC on the VERY NEXT instruction already
+    // sees the cleared carry.
+    //
+    // Asserted through behaviour (SKNC's skip) rather than by reading c_in
+    // straight after the step: c_in is published by step()'s carry-commit
+    // block at the top of the FOLLOWING step (mirroring MAME, whose
+    // op_rc()/op_sc() write only m_c and leave execute_run()'s tail to
+    // publish it), so mid-flight c_in is an internal detail. What the
+    // hardware guarantees, and what this test pins, is that the next
+    // instruction observes it.
+    uint8_t rom2[3] = {0x06, 0x05, 0x02}; // SC; RC; SKNC
     Mm77laModel m2(rom2, sizeof(rom2));
     m2.reset();
     m2.debug_set_pc(0);
     m2.step(); // SC
     CHECK(m2.state().c == 1);
-    CHECK(m2.state().c_in == 1);
     m2.step(); // RC
     CHECK(m2.state().c == 0);
-    CHECK(m2.state().c_in == 0); // immediate, not delayed like AC
+    m2.step(); // SKNC sees carry 0 -> skips
+    CHECK(m2.state().skip == true);
 }
 
 static void test_sc_sets_carry_immediately() {
-    // Important #4: SC (0x06) sets carry = 1, immediately (no c_delay).
-    uint8_t rom[1] = {0x06}; // SC
+    // Important #4: SC (0x06) sets carry = 1, immediately (no c_delay) --
+    // SKNC on the very next instruction must NOT skip. See
+    // test_rc_clears_carry_immediately on why this is asserted via SKNC
+    // rather than by reading c_in directly.
+    uint8_t rom[2] = {0x06, 0x02}; // SC; SKNC
     Mm77laModel m(rom, sizeof(rom));
     m.reset();
     m.debug_set_pc(0);
     CHECK(m.state().c == 0);
-    CHECK(m.state().c_in == 0);
     m.step();
     CHECK(m.state().c == 1);
-    CHECK(m.state().c_in == 1); // immediate: SKNC on the VERY NEXT step already sees it
+    m.step(); // SKNC sees carry 1 -> does not skip
+    CHECK(m.state().skip == false);
 }
 
 static void test_skip_count_skips_forward_a_plus_1_instructions() {
@@ -994,10 +1151,16 @@ int main() {
     test_rt_pops_stack();
     test_rtsk_pops_and_sets_skip();
     test_lb_then_eob_coalesce_as_a_pair();
+    test_skipped_byte_enters_prev_op_history_as_a_nop();
+    test_eob_immediate_is_three_bits_wide();
+    test_eob_after_eob_is_suppressed();
+    test_lb_after_eob_is_suppressed();
+    test_eob_applies_after_the_first_lb_of_a_run();
     test_successive_lai_coalescing_suppresses_repeat();
     test_lai_after_non_lai_is_not_suppressed();
     test_ac_carry_visible_to_sknc_only_after_one_instruction_delay();
-    test_back_to_back_ac_does_not_lose_first_pending_carry();
+    test_ac_carry_is_not_visible_until_two_instructions_later();
+    test_back_to_back_ac_uses_the_older_carry();
     test_xdsk_sets_ram_delay_and_skips_on_wrap_to_f();
     test_sag_forces_ram_addr_upper_bits_to_3_for_one_cycle_only();
     test_tr_prefixed_tl_jumps_off_page();
