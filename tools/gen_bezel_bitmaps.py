@@ -107,32 +107,40 @@ def build_label_image():
 
 
 # --- Field ---
-# Photo-measured colors (see this file's module docstring) -- distinct
-# from FB1's darker palette.
-GREEN_RGB = (18, 202, 125)     # field-area background
-ENDZONE_RGB = (26, 230, 255)   # endzone
+# Palette and proportions deliberately match the FB1 core exactly (see
+# ../mattel-football/tools/gen_bezel_bitmaps.py). An earlier pass here used
+# lighter, more saturated colours and a much taller strip "measured from a
+# photo"; side by side against FB1 on real hardware that read as wrong --
+# the two devices share a look, and FB1's is the one that has been
+# confirmed against the real hardware.
+GREEN_RGB = (14, 138, 3)       # field-area background
+ENDZONE_RGB = (13, 98, 188)    # endzone (blue, not cyan)
 BLACK_RGB = (0, 0, 0)          # field cell fill
-DIVIDER_RGB = (230, 230, 230)  # column dividers / hash ticks / border
+DIVIDER_RGB = (203, 203, 203)  # column dividers / hash ticks / border
 
 FIELD_W = 400
-# Strip height (STRIP_Y1 - STRIP_Y0) must match video_renderer.v's
-# STRIP_H. It is tall enough for the three lamp rows to be spread across
-# it (rather than crammed into its top third) and to fill most of the
-# 360-row canvas below the scoreboard, leaving only a modest green margin.
-STRIP_Y0, STRIP_Y1 = 8, 188  # exclusive end; 180px tall strip
-MARGIN_X = 6      # green shows on both outer edges
-EZ_W = 19         # endzone width
-FIELD_X0 = MARGIN_X + EZ_W  # 25: where the 10-column field region starts
-COL_PITCH = 35    # 33px cell + 2px divider, x10 columns = 350px
+# Strip height (STRIP_Y1 - STRIP_Y0) must match video_renderer.v's STRIP_H.
+# 108px, same as FB1, and divisible by 3 so the two hash rows land on exact
+# thirds. The previous 180px made the field far taller than the real
+# device's proportions.
+STRIP_Y0, STRIP_Y1 = 8, 116  # exclusive end; 108px tall strip
+MARGIN_X = 7      # green shows on both outer edges
+EZ_W = 23         # endzone width, as FB1
+FIELD_X0 = MARGIN_X + EZ_W  # 30: where the 10-column field region starts
+# 32px cell + 2px divider, x10 columns = 340px. FB1 uses pitch 38 for its 9
+# columns; FBII has 10, so the pitch shrinks to keep the same overall span
+# and the same 7px green margin on each side:
+#   30 + 340 + 2 (last divider) + 21 (endzone) = 393, leaving 7px.
+COL_PITCH = 34
 DIV_W = 2
 BORDER_W = 4
 BORDER_RGB = DIVIDER_RGB
-# Single hash-tick row at the strip's vertical center. With the strip at
-# 180px and video_renderer.v's LAMP_Y_OFF=8 / ROW_PITCH=60 / LAMP_H=28,
-# the lamp rows occupy strip-relative y8-35, y68-95 and y128-155, so this
-# center tick (strip-relative y90) lands among them rather than below
-# all three.
-HASH_Y = STRIP_Y0 + (STRIP_Y1 - STRIP_Y0) // 2
+# Two hash-tick rows on the strip's thirds, matching FB1 and the real
+# device. They sit midway between the lamp rows (which occupy strip-relative
+# y15-20, y51-56, y87-92), so they read as yard markings between the LEDs
+# rather than colliding with them.
+HASH_Y1 = STRIP_Y0 + (STRIP_Y1 - STRIP_Y0) // 3       # 44
+HASH_Y2 = STRIP_Y0 + 2 * (STRIP_Y1 - STRIP_Y0) // 3   # 80
 HASH_H = 2
 HASH_REACH = 4
 
@@ -140,9 +148,8 @@ HASH_REACH = 4
 def build_field_image():
     """Draws the field band procedurally: green background, a solid
     border framing the strip, 10 black field columns divided by light
-    dividers, an endzone column on each side, and a single row of
-    hash-mark ticks at each internal divider (FBII's photo shows one tick
-    row, not FB1's two)."""
+    dividers, an endzone column on each side, and two rows of
+    hash-mark ticks at each internal divider, as on FB1."""
     im = Image.new("RGB", (FIELD_W, STRIP_Y1 - STRIP_Y0 + 2 * BORDER_W), GREEN_RGB)
     draw = ImageDraw.Draw(im)
     # Shift everything down by BORDER_W so the border has room above the
@@ -167,12 +174,13 @@ def build_field_image():
     ez2_x0 = divider_xs[10] + DIV_W
     draw.rectangle([ez2_x0, y0, ez2_x0 + (EZ_W - DIV_W) - 1, y0 + (STRIP_Y1 - STRIP_Y0) - 1], fill=ENDZONE_RGB)
 
-    hash_y = y0 + (HASH_Y - STRIP_Y0)
-    for dx in divider_xs[1:10]:  # internal dividers only, not the 2 bordering the endzones
-        draw.rectangle(
-            [dx - HASH_REACH, hash_y - HASH_H // 2, dx + DIV_W - 1 + HASH_REACH, hash_y + HASH_H // 2 - 1],
-            fill=DIVIDER_RGB,
-        )
+    for hy_strip in (HASH_Y1, HASH_Y2):
+        hash_y = y0 + (hy_strip - STRIP_Y0)
+        for dx in divider_xs[1:10]:  # internal dividers only, not the 2 bordering the endzones
+            draw.rectangle(
+                [dx - HASH_REACH, hash_y - HASH_H // 2, dx + DIV_W - 1 + HASH_REACH, hash_y + HASH_H // 2 - 1],
+                fill=DIVIDER_RGB,
+            )
 
     return im
 

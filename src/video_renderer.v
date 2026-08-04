@@ -12,10 +12,13 @@ module video_renderer (
     output reg  [23:0]  rgb
 );
     localparam [23:0] C_BG     = 24'h000000;
-    localparam [23:0] C_DIM    = 24'h552200;
-    localparam [23:0] C_BRIGHT = 24'hFF8800;
+    // LED colours match the FB1 core exactly -- both devices use the same
+    // red LEDs, and the orange used here previously read as clearly wrong
+    // next to FB1 on real hardware.
+    localparam [23:0] C_DIM    = 24'h801414;
+    localparam [23:0] C_BRIGHT = 24'hFF2020;
     localparam [23:0] C_WHITE  = 24'hFFFFFF;
-    localparam [23:0] C_GREEN  = 24'h12CA7D; // matches field_rom's GREEN_RGB
+    localparam [23:0] C_GREEN  = 24'h0E8A03; // matches field_rom's GREEN_RGB
 
     // --- Digit position (0-6, left-to-right on screen) -> levels[] row.
     // Unchanged from Phase 5's display_render.v. ---
@@ -73,15 +76,26 @@ module video_renderer (
         endcase
     endfunction
 
-    localparam FIELD_X0 = 25, COL_PITCH = 35;
+    // Field geometry mirrors FB1's, adjusted from 9 to 10 columns. All of
+    // these must stay in step with tools/gen_bezel_bitmaps.py, which draws
+    // the matching background bitmap.
+    localparam FIELD_X0 = 30, COL_PITCH = 34;
     // STRIP_H must match gen_bezel_bitmaps.py's STRIP_Y1 - STRIP_Y0.
-    // The three lamp rows are spread across the whole strip (rows at
-    // strip-relative y8-35, y68-95, y128-155) so the strip does not read
-    // as three lamps crowded at the top over an empty black field.
-    localparam STRIP_Y0 = 90, STRIP_H = 180;
-    localparam LAMP_Y_OFF = 8, ROW_PITCH = 60, LAMP_W = 20, LAMP_H = 28;
+    localparam STRIP_H = 108;
+    // Centred in the canvas area below the scoreboard (which ends at y=75):
+    // 163 + 108/2 = 217, and (75 + 360)/2 = 217.
+    localparam STRIP_Y0 = 163;
+    // Lamps are thin dashes, as on the real device and FB1 (which uses
+    // 16x6 in a 36px cell). Scaled to this core's 32px cell: 14 wide with a
+    // 9px margin each side, same 6px height. The previous 20x28 lamps were
+    // nearly five times too tall and read as solid blocks rather than LEDs.
+    // Rows sit on the same thirds FB1 uses, leaving a 15px margin at the
+    // top and bottom of the strip: 15 + 6 + 30 + 6 + 30 + 6 + 15 = 108.
+    localparam LAMP_Y_OFF = 15, ROW_PITCH = 36, LAMP_W = 14, LAMP_H = 6;
     localparam LAMP_Y0 = STRIP_Y0 + LAMP_Y_OFF;
     localparam BORDER_W = 4;
+    // Green surround around the field strip, matching FB1's 32px margin.
+    localparam GREEN_MARGIN = 32;
 
     function [23:0] level_color(input [1:0] lvl);
         case (lvl)
@@ -131,8 +145,15 @@ module video_renderer (
                 rgb = C_WHITE;
         end else if (y >= (STRIP_Y0 - BORDER_W) && y < (STRIP_Y0 + STRIP_H + BORDER_W)) begin
             rgb = field_rgb; // field strip (border + 10-column art)
-        end else begin
+        end else if (y >= (STRIP_Y0 - BORDER_W - GREEN_MARGIN) &&
+                     y <  (STRIP_Y0 + STRIP_H + BORDER_W + GREEN_MARGIN)) begin
             rgb = C_GREEN; // green margin above/below the field strip
+        end else begin
+            // Letterbox. FB1 does the same (a black bar above and below a
+            // 32px green margin) -- filling the whole lower canvas with
+            // green made the field read as a green screen with a strip on
+            // it rather than a field with a surround.
+            rgb = C_BG;
         end
 
         // --- digit segments: unconditional draw ---

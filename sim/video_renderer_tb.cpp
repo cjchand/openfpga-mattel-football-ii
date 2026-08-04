@@ -76,8 +76,8 @@ static void test_field_lamp_slot0_top_lights_when_level_2() {
     Vvideo_renderer d;
     clear(d);
     set_cell(d, 8, 8, 2); // field screen slot 0 -> row 8, top lamp
-    d.x = 25 + (35-20)/2 + 20/2;  // FIELD_X0=25, COL_PITCH=35, LAMP_W=20
-    d.y = 90 + 8 + 28/2;          // STRIP_Y0=90, LAMP_Y_OFF=8, LAMP_H=28
+    d.x = 30 + (34-14)/2 + 14/2;  // FIELD_X0=30, COL_PITCH=34, LAMP_W=14
+    d.y = 163 + 15 + 6/2;         // STRIP_Y0=163, LAMP_Y_OFF=15, LAMP_H=6
     d.eval();
     CHECK(d.rgb != 0, "field lamp (slot 0 -> row 8, top) lights up when its cell is level 2");
 }
@@ -86,9 +86,9 @@ static void test_field_lamp_slot9_bottom_last_position_reachable() {
     Vvideo_renderer d;
     clear(d);
     set_cell(d, 7, 10, 2); // field screen slot 9 -> row 7 (field_row(9)), bottom lamp -> col 10
-    // FIELD_X0=25, COL_PITCH=35, LAMP_W=20, STRIP_Y0=90, LAMP_Y_OFF=8, ROW_PITCH=60, LAMP_H=28
-    int cx = 25 + 9 * 35 + (35 - 20) / 2 + 20 / 2;
-    int cy = 90 + 8 + 2 * 60 + 28 / 2;
+    // FIELD_X0=30, COL_PITCH=34, LAMP_W=14, STRIP_Y0=163, LAMP_Y_OFF=15, ROW_PITCH=36, LAMP_H=6
+    int cx = 30 + 9 * 34 + (34 - 14) / 2 + 14 / 2;
+    int cy = 163 + 15 + 2 * 36 + 6 / 2;
     d.x = cx; d.y = cy;
     d.eval();
     CHECK(d.rgb != 0, "last field lamp (slot 9 -> row 7, bottom) is independently addressable and lights up");
@@ -117,7 +117,7 @@ static void test_bezel_enabled_shows_label_bar_background() {
 }
 
 static void test_field_strip_extends_below_the_lamp_rows() {
-    // The strip is 180px tall (STRIP_Y0=90 .. y269 plus border), so a
+    // The strip is 108px tall (STRIP_Y0=163 .. y270 plus border), so a
     // point well below the last lamp row (y218-245) is still field art,
     // not the green margin -- this is what keeps the lower canvas from
     // being a large empty green band.
@@ -125,15 +125,23 @@ static void test_field_strip_extends_below_the_lamp_rows() {
     clear(d);
     d.x = 30; d.y = 260; // inside field cell 0, below all three lamp rows
     d.eval();
-    CHECK(d.rgb != 0x12CA7D, "field strip still covers y=260 rather than falling back to green margin");
+    CHECK(d.rgb != 0x0E8A03, "field strip still covers y=260 rather than falling back to green margin");
 }
 
 static void test_bezel_enabled_shows_green_margin() {
     Vvideo_renderer d;
     clear(d);
-    d.x = 200; d.y = 350; // bottom green filler area
+    // Green is a 32px surround around the strip (STRIP_Y0=163, STRIP_H=108,
+    // BORDER_W=4), not a fill of the whole lower canvas -- matching FB1.
+    d.x = 200; d.y = 290; // inside the bottom green margin (275..306)
     d.eval();
-    CHECK(d.rgb == 0x12CA7D, "bottom green margin shows field green when bezel_enable=1");
+    CHECK(d.rgb == 0x0E8A03, "bottom green margin shows field green when bezel_enable=1");
+    d.x = 200; d.y = 350; // beyond the green margin: black letterbox
+    d.eval();
+    CHECK(d.rgb == 0x000000, "below the green margin is black letterbox, not more green");
+    d.x = 200; d.y = 100; // above the green margin: black letterbox
+    d.eval();
+    CHECK(d.rgb == 0x000000, "above the green margin is black letterbox, not more green");
 }
 
 int main(int argc, char** argv) {
