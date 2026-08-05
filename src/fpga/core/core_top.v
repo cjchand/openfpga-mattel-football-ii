@@ -602,6 +602,7 @@ core_bridge_cmd icb (
         .bridge_wr      ( bridge_wr ),
         .bridge_addr    ( bridge_addr ),
         .bridge_wr_data ( bridge_wr_data ),
+        .rd_clk         ( clk_core_12288 ),
         .rom_addr       ( rom_addr_w ),
         .rom_data       ( rom_data_w )
     );

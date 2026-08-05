@@ -15,8 +15,9 @@ static const uint32_t SLOT_BASE = 0x10000000;
 
 struct Loader {
     Vrom_loader d;
-    Loader() { d.clk = 0; d.eval(); }  // Initialize clk to ensure proper posedge detection
+    Loader() { d.clk = 0; d.rd_clk = 0; d.eval(); }  // Initialize clocks to ensure proper posedge detection
     void tick() { d.clk = 1; d.eval(); d.clk = 0; d.eval(); }
+    void rd_tick() { d.rd_clk = 1; d.eval(); d.rd_clk = 0; d.eval(); }
 
     void write_word(int word_index, uint32_t data) {
         d.bridge_addr = SLOT_BASE + word_index * 4;
@@ -38,7 +39,20 @@ struct Loader {
         }
     }
 
+    // The read is registered on rd_clk (see rom_loader.v): present the
+    // address, take one read clock, then the data is valid. In the core this
+    // latency is absorbed by the ~129 core clocks between ce pulses.
     uint8_t read(uint16_t rom_addr) {
+        d.rom_addr = rom_addr;
+        d.eval();
+        rd_tick();
+        return d.rom_data;
+    }
+
+    // Reads WITHOUT clocking, i.e. what the output holds while the new
+    // address is still propagating. Used to pin that the latency is exactly
+    // one cycle rather than zero or two.
+    uint8_t read_unclocked(uint16_t rom_addr) {
         d.rom_addr = rom_addr;
         d.eval();
         return d.rom_data;
@@ -46,6 +60,36 @@ struct Loader {
 };
 
 static void run_test(const char* name, void (*fn)(void)) { g_current = name; fn(); }
+
+// Pins the read pipeline depth. Registering the word read is what lets
+// Quartus infer an M10K for `mem`, but it costs a cycle, and the exact depth
+// matters: two cycles would feed the CPU the PREVIOUS instruction's byte on
+// every fetch, which is a working-looking core running a shifted program.
+static void test_read_latency_is_exactly_one_cycle() {
+    Loader l;
+    uint8_t rom[1536];
+    for (int i = 0; i < 1536; i++) rom[i] = (uint8_t)(i ^ 0x5A);
+    l.load(rom);
+    l.read(0x000);                       // settle on a known address
+    uint8_t before = l.read_unclocked(0x123);
+    CHECK(before == rom[0x000], "output still holds the old byte before the read clock");
+    l.rd_tick();
+    CHECK(l.d.rom_data == rom[0x123], "one read clock after the address, the new byte is out");
+    l.rd_tick();
+    CHECK(l.d.rom_data == rom[0x123], "and it stays put -- the latency is one cycle, not two");
+}
+
+// Walks consecutive addresses the way a CPU fetch does, including crossing a
+// 32-bit word boundary (0x003 -> 0x004), which is where a byte-select that
+// was not registered alongside its word would come apart.
+static void test_consecutive_reads_track_the_address() {
+    Loader l;
+    uint8_t rom[1536];
+    for (int i = 0; i < 1536; i++) rom[i] = (uint8_t)(i * 7 + 3);
+    l.load(rom);
+    for (uint16_t a = 0x000; a < 0x010; a++)
+        CHECK(l.read(a) == rom[a], "consecutive read matches the file, across word boundaries");
+}
 
 static void test_load_and_direct_read() {
     Loader l;
@@ -78,6 +122,8 @@ static void test_bridge_writes_outside_slot_ignored() {
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
+    run_test("read_latency_is_exactly_one_cycle", test_read_latency_is_exactly_one_cycle);
+    run_test("consecutive_reads_track_the_address", test_consecutive_reads_track_the_address);
     run_test("load_and_direct_read", test_load_and_direct_read);
     run_test("mirror_fold_0x600_to_0x7ff", test_mirror_fold_0x600_to_0x7ff);
     run_test("bridge_writes_outside_slot_ignored", test_bridge_writes_outside_slot_ignored);

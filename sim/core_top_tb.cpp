@@ -263,10 +263,19 @@ static void test_rom_bytes_reach_the_cpu_in_file_order() {
     // CPU walk the address space and check every fetch it makes. Any
     // byte-order or mirror-fold error shows up immediately, and this covers
     // far more addresses than a handful of forced probes would.
+    // Sampled ON the ce pulse, which is the only moment the value matters:
+    // core_ce is when pps41_core latches the fetched byte. Checking on every
+    // clock instead would be asserting a particular read latency rather than
+    // correctness -- rom_loader's read is registered (so `mem` can infer an
+    // M10K), so rom_data_w is legitimately stale for one core clock after
+    // rom_addr_w moves. What must hold is that it has settled by the next ce,
+    // ~129 core clocks later. If the latency ever grew past that budget, or a
+    // byte/word select came apart, this fails on the very first fetch.
     int checked = 0, bad = 0;
     unsigned seen_high = 0;
     for (long i = 0; i < 200000; i++) {
         ticks(&d, 1);
+        if (!d.rootp->core_top__DOT__core_ce) continue;
         unsigned addr = d.rootp->core_top__DOT__rom_addr_w & 0x7FF;
         unsigned folded = (addr >= 0x600) ? (addr - 0x200) : addr;
         uint8_t got = d.rootp->core_top__DOT__rom_data_w;
@@ -280,7 +289,7 @@ static void test_rom_bytes_reach_the_cpu_in_file_order() {
         checked++;
     }
     if (bad) failures++;
-    CHECK(checked > 1000, "the CPU actually fetched during the run");
+    CHECK(checked > 100, "the CPU actually fetched on ce pulses during the run");
     // The 0x600-0x7FF mirror fold is NOT exercised here: at ~95kHz the CPU
     // retires only a few hundred instructions in a run of this length, and
     // the game's mirrored subroutine pages are thousands of instructions
