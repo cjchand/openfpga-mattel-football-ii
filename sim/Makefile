@@ -3,7 +3,7 @@ VERILATOR := verilator
 CXX := c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 
-.PHONY: core-rom-lockstep-test lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test core-rom-lockstep-test vectors-test display-vectors-long-test test clean
+.PHONY: lint-core golden-test golden-trace decode-test alu-test core-pc-test core-ram-test core-test core-rom-lockstep-test tone-stuck-fuzz vectors-test display-vectors-long-test test clean
 .PHONY: gameplay-test stimulus-test display-parity-test pro-switch-test core-top-test debug-probe-test mame-parity-test opla-test opla-rtl-test tone-test tone-rtl-test io-test io-rtl-test display-mux-test display-mux-rtl-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test video-renderer-test field-rom-test label-rom-test screenshot startup-state-test
 
 lint-core:
@@ -259,10 +259,32 @@ core-test:
 # EOB immediate into pps41_core.v alone leaves vectors-test passing, while
 # this catches it at cycle 148. Real ROM, real instruction mix, ~13 seconds
 # of chip time.
+#
+# It runs TWICE. The ce=1 pass is the original one. The --ce-period=129 pass
+# clocks the core the way the device does -- one clock enable every ~129.35
+# core clocks, alternating 129/130 like ce_gen's fractional accumulator -- and
+# exists because ce=1 hides every bug where a combinational instruction strobe
+# reaches a register that is clocked on clk rather than qualified by ce. IOS
+# was such a bug: at ce=1 it passed 1.2M cycles, at --ce-period=129 it diverges
+# at cycle 220520 (tone_freq 0x44 vs 0x40, ios_state 0 vs 1). That was the
+# hardware stuck-tone lockup. Do not drop this pass.
 core-rom-lockstep-test: core-test
 	@if [ ! -f "$(MAME_PARITY_ROM)" ]; then \
 		echo "core-rom-lockstep-test: need the game ROM at $(MAME_PARITY_ROM)"; exit 2; fi
 	./obj_dir_core/Vpps41_core "$(MAME_PARITY_ROM)" 1200000 stimulus/gameplay.txt
+	./obj_dir_core/Vpps41_core "$(MAME_PARITY_ROM)" 1200000 stimulus/gameplay.txt --ce-period=129
+
+# Fuzzes the golden model with randomised, human-plausible button traffic and
+# asserts the invariant src/debug_probe.v checks on hardware: tone_on is never
+# continuously high for 2 seconds. 400 trials x 30M cycles (35 hours of chip
+# time) found nothing, which is what established that the hardware stuck-tone
+# was NOT the ROM or the CPU semantics but the RTL's ce handling. Kept short
+# here; raise the trial/cycle counts to re-run the full search.
+tone-stuck-fuzz:
+	@if [ ! -f "$(MAME_PARITY_ROM)" ]; then \
+		echo "tone-stuck-fuzz: need the game ROM at $(MAME_PARITY_ROM)"; exit 2; fi
+	$(CXX) $(CXXFLAGS) golden/mm77la_model.cpp golden/mm77la_opla.cpp golden/mm77la_tone.cpp golden/mm77la_io.cpp golden/mm77la_display_mux.cpp golden/mm77la_display_pwm.cpp golden/tone_stuck_fuzz.cpp -o /tmp/tone_stuck_fuzz
+	/tmp/tone_stuck_fuzz $(MAME_PARITY_ROM) 8 5000000
 
 vectors-test: core-test
 	@set -e; \
@@ -293,7 +315,7 @@ display-vectors-long-test: core-test
 	done; \
 	echo "display-vectors-long-test: all display vectors PASS at 3200 cycles"
 
-test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test mame-parity-test gameplay-test stimulus-test display-parity-test pro-switch-test debug-probe-test core-top-test core-test core-rom-lockstep-test vectors-test display-vectors-long-test video-renderer-test field-rom-test label-rom-test
+test: lint-core opla-test opla-rtl-test tone-test tone-rtl-test io-test display-mux-test display-pwm-test display-pwm-rtl-test ce-gen-test rom-loader-test audio-gen-test io-rtl-test display-mux-rtl-test decode-test alu-test core-pc-test core-ram-test golden-test mame-parity-test gameplay-test stimulus-test display-parity-test pro-switch-test debug-probe-test core-top-test core-test core-rom-lockstep-test tone-stuck-fuzz vectors-test display-vectors-long-test video-renderer-test field-rom-test label-rom-test
 
 clean:
 	rm -rf obj_dir* /tmp/mm77la_model_test /tmp/mm77la_opla_test /tmp/mm77la_tone_test /tmp/mm77la_io_test /tmp/mm77la_display_mux_test /tmp/mm77la_display_mux_rtl_test /tmp/mm77la_display_pwm_test

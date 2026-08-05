@@ -42,6 +42,18 @@ module pps41_io (
     wire [11:0] d_pin_state = d_out_reg | d_input;
     assign skisl_skip = (!b7_high && bl_valid) ? ~d_pin_state[bl] : 1'b0;
 
+    // This block is deliberately NOT qualified by the core's ce, unlike
+    // pps41_tone's (see the ios_fire comment in pps41_core.v). On the device
+    // `op` -- and therefore each *_fire strobe -- is stable for the whole
+    // ~129-clock ce period, so every assignment below is applied ~129 times
+    // per instruction. That is harmless here and only here, because every one
+    // of them is idempotent: they set or clear a D bit, or load R from A/C.
+    // Applying "d_out_reg[bl] <= 1" 129 times is the same as applying it once.
+    //
+    // Anything added to this block that is NOT idempotent -- a shift, a
+    // toggle, an increment -- must be qualified by ce, or it will silently
+    // work in every ce=1 testbench and misbehave on hardware in a way that
+    // depends on ce_gen's fractional 129/130 period.
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             r_out_reg <= 10'h3FF;

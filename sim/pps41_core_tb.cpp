@@ -7,6 +7,7 @@
 #include "verilated.h"
 #include "golden/mm77la_model.h"
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <fstream>
 #include <map>
@@ -17,6 +18,33 @@
 static void tick(Vpps41_core* dut) {
     dut->clk = 0; dut->eval();
     dut->clk = 1; dut->eval();
+}
+
+// Advances the core by exactly one instruction.
+//
+// With ce_period == 1 this is a plain tick with ce held high, which is how
+// this testbench ran for its whole life -- and that is precisely the problem
+// it was blind to. On the real device ce_gen pulses ce once every ~129.35
+// core clocks, so `op` sits stable on the ROM bus for ~129 clocks while the
+// instruction's combinational "fire" strobes stay asserted the whole time.
+// Any downstream register that acts on a fire signal without qualifying it
+// with ce therefore applies that instruction ~129 times instead of once.
+// pps41_tone did exactly that: IOS shifted tone_freq and advanced ios_state
+// on every one of those clocks. At ce=1 the two are indistinguishable, which
+// is why 1.2M cycles of ROM lockstep passed while the hardware produced
+// wrong tone pitches and, when ios_state landed out of phase with the ROM's
+// own RAM-bit mirror of it, a tone that never stopped.
+//
+// ce_period alternates 129/130 to reproduce ce_gen's fractional accumulator,
+// so a bug whose effect depends on (period mod 3) -- as this one's did --
+// cannot hide behind an exact divider.
+static void advance(Vpps41_core* dut, int ce_period, long instr) {
+    if (ce_period <= 1) { dut->ce = 1; tick(dut); return; }
+    int period = ce_period + (instr % 3 == 0 ? 1 : 0);
+    dut->ce = 0;
+    for (int k = 0; k < period - 1; k++) tick(dut);
+    dut->ce = 1;
+    tick(dut);
 }
 
 static uint8_t ram_phys_index(uint8_t addr) {
@@ -31,14 +59,24 @@ static uint8_t ram_phys_index(uint8_t addr) {
 // load_stimulus lives in stimulus.h -- see there for why.
 
 int main(int argc, char** argv) {
-    if (argc != 3 && argc != 4) {
-        std::fprintf(stderr, "usage: %s <rom-file> <cycle-count> [stimulus-file]\n", argv[0]);
+    // Positional args, plus an optional --ce-period=N anywhere after them.
+    std::vector<char*> pos;
+    int ce_period = 1;
+    for (int i = 1; i < argc; i++) {
+        if (std::strncmp(argv[i], "--ce-period=", 12) == 0)
+            ce_period = std::atoi(argv[i] + 12);
+        else if (std::strncmp(argv[i], "--", 2) != 0)
+            pos.push_back(argv[i]);
+    }
+    if (pos.size() != 2 && pos.size() != 3) {
+        std::fprintf(stderr,
+            "usage: %s <rom-file> <cycle-count> [stimulus-file] [--ce-period=N]\n", argv[0]);
         return 2;
     }
     Verilated::commandArgs(argc, argv);
 
-    FILE* f = std::fopen(argv[1], "rb");
-    if (!f) { std::fprintf(stderr, "cannot open %s\n", argv[1]); return 2; }
+    FILE* f = std::fopen(pos[0], "rb");
+    if (!f) { std::fprintf(stderr, "cannot open %s\n", pos[0]); return 2; }
     std::fseek(f, 0, SEEK_END);
     long size = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
@@ -46,8 +84,8 @@ int main(int argc, char** argv) {
     if (std::fread(rom.data(), 1, rom.size(), f) != rom.size()) { std::fclose(f); return 2; }
     std::fclose(f);
 
-    long cycles = std::strtol(argv[2], nullptr, 10);
-    auto stimulus = load_stimulus(argc == 4 ? argv[3] : nullptr);
+    long cycles = std::strtol(pos[1], nullptr, 10);
+    auto stimulus = load_stimulus(pos.size() == 3 ? pos[2] : nullptr);
     uint8_t current_p = 0x00;
 
     Mm77laModel golden(rom.data(), rom.size());
@@ -82,7 +120,7 @@ int main(int argc, char** argv) {
         addr &= 0x7FF;
         if (addr >= 0x600) addr -= 0x200;
         dut->rom_data = (addr < rom.size()) ? rom[addr] : 0;
-        tick(dut);
+        advance(dut, ce_period, i);
 
         dmux->d = dut->d_output_out;
         dmux->r = dut->r_output_out;
@@ -163,7 +201,10 @@ int main(int argc, char** argv) {
         if (mismatch) { delete dut; delete dmux; delete dpwm; return 1; }
     }
 
-    std::printf("PASS: %ld cycles, no mismatches\n", cycles);
+    if (ce_period > 1)
+        std::printf("PASS: %ld cycles at ce-period ~%d, no mismatches\n", cycles, ce_period);
+    else
+        std::printf("PASS: %ld cycles, no mismatches\n", cycles);
     std::printf("INT1L observed: %s; IX executed: %ld time(s)\n",
                  int1l_ever_hit ? "yes" : "no", ix_hit_count);
     std::printf("Unimplemented opcode dispatched: %s\n", unimpl_ever_hit ? "yes" : "no");

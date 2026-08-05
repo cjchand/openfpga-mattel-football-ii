@@ -246,8 +246,27 @@ module pps41_core (
         .r_out(opla_r_out)
     );
 
-    wire        ios_fire   = (op == 8'h2D) && !skip_eff && !is_2byte && !is_3byte;
-    wire        int0h_fire = (op == 8'h03) && !skip_eff && !is_2byte && !is_3byte;
+    // IOS and INT0H are the only instruction strobes whose effects are NOT
+    // idempotent -- IOS shifts a nibble into tone_freq and advances a modulo-3
+    // state machine, INT0H toggles the speaker -- so they, unlike the io
+    // strobes below, MUST be qualified by ce.
+    //
+    // `op` is combinational off rom_data, and rom_addr/pc only move on ce, so
+    // on the real device op sits stable for the ~129 core clocks of one ce
+    // period. Without this qualifier pps41_tone (which is clocked on clk, not
+    // on ce) applied each IOS ~129 times: tone_freq ended up as the same
+    // nibble duplicated, and ios_state advanced by (period mod 3), which
+    // ce_gen's fractional 129/130 accumulator makes 0 or 1 depending on
+    // nothing the program can see. When it came out 0, the chip's ios_state
+    // fell one behind the mirror of it the ROM keeps in RAM (see the SKBF 4 /
+    // IOS pair at 0b:2b), so the IOS the game meant as "tone off" landed on
+    // state 1 and turned the tone ON permanently -- the hardware lockup with
+    // the steady tone, and the slightly-wrong pitches, both come from here.
+    //
+    // Invisible to every ce=1 testbench, which is why sim/pps41_core_tb.cpp
+    // now takes --ce-period.
+    wire        ios_fire   = ce && (op == 8'h2D) && !skip_eff && !is_2byte && !is_3byte;
+    wire        int0h_fire = ce && (op == 8'h03) && !skip_eff && !is_2byte && !is_3byte;
     wire [7:0]  tone_freq_out;
     wire        tone_on_out;
     wire [1:0]  spk_output_out;

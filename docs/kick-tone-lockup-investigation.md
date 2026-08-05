@@ -153,3 +153,115 @@ that actually matters (what the next `SKNC` observes).
   (`m_skip = !m_int_line[1]`) and ours should too.
 - **Not yet re-tested on real hardware.** The fixes are verified in
   simulation only; a bitstream rebuild and SD-card deploy is the next step.
+
+---
+
+# The second lockup: IOS applied ~129 times per instruction
+
+The three CPU bugs above fixed the *first* lockup (the one at the kickoff).
+On 2026-08-04 the core was played on real hardware for the first time since:
+boot, kickoff and gameplay all worked, but after a while the game locked up
+with a steady low tone, and the tones throughout were slightly flat.
+
+Both symptoms are one bug.
+
+## What the device reported
+
+`src/debug_probe.v` had shipped in the bitstream for exactly this. The
+photographed strip decoded to:
+
+| slot | meaning | value |
+|---|---|---|
+| 0 | marker | 1 |
+| 1 | `cause_tone` | **1** |
+| 2 | `cause_pc` | 0 |
+| 3 | unimplemented opcode seen | 0 |
+| 4 | `INT1L` seen | 0 |
+| 5-15 | latched PC, MSB first | `0 1110 1110 10` = **0x3BA** |
+
+So the CPU was **still executing** (`cause_pc` clear -- the PC moved within
+every 0.5s window) and had simply held `tone_on` high continuously for two
+seconds. No sound effect in this game is longer than 0.72s.
+
+## Why the ROM can be made to hold a tone forever
+
+IOS is a three-state machine in the chip: state 1 turns the tone ON, states 0
+and 2 turn it OFF (`mm78laop.cpp: op_ios`). The game keeps **its own mirror of
+that state in a RAM bit**, and uses it to decide whether an extra
+state-consuming IOS is needed. At page `0b`:
+
+```
+0b:2b SKBF 4     ; if the "tone running" flag is clear, skip...
+0b:2a IOS        ; ...this state-consuming IOS
+0b:35 RB   4     ; clear the flag
+...
+0b:3f LAI 15 / 0b:1f IOS / 0b:0f LAI 5 / 0b:07 A / 0b:03 IOS
+```
+
+If the chip's `ios_state` and the ROM's RAM-bit mirror ever fall out of step
+by one, the IOS the game intends as "turn the tone off" lands on chip state 1
+and turns it **on**, permanently, with the CPU running normally throughout.
+That is the observed symptom exactly.
+
+## Root cause
+
+`op` is combinational off `rom_data`, and `rom_addr`/`pc` only move on `ce`.
+On the device `ce_gen` pulses `ce` once every ~129.35 core clocks, so `op` --
+and every combinational `*_fire` strobe derived from it -- sits stable for the
+whole ~129-clock period. `pps41_tone` is clocked on `clk`, and its IOS branch
+was not qualified by `ce`:
+
+```verilog
+if (ios_fire) begin
+    tone_freq <= {ios_a, tone_freq[7:4]};   // a SHIFT
+    tone_on   <= ios_arms;
+    ios_state <= next_ios_state;            // a modulo-3 INCREMENT
+end
+```
+
+So one IOS instruction was applied ~129 times:
+
+- `tone_freq` ended up as **the same nibble duplicated** (`{a,a}`) instead of
+  `{a_high, a_low}` -- e.g. `0x44` where the reference has `0x40`. That is a
+  ~6% period error, i.e. every tone slightly flat. The reported pitch problem.
+- `ios_state` advanced by `(period mod 3)`, and `ce_gen`'s fractional
+  accumulator alternates the period between 129 and 130 -- so **0 or 1**,
+  depending on accumulator phase at that instant. When it came out 0 the chip
+  fell one state behind the ROM's RAM-bit mirror, and the next "tone off" IOS
+  turned the tone on forever. Intermittent, timing-dependent, and unrelated to
+  what the player did -- which is why it appeared only after minutes of play.
+
+`pps41_io` has the same unqualified structure and is **fine**, because every
+one of its assignments is idempotent (set/clear a D bit, load R from A/C).
+A comment there now says so, and says what would break the assumption.
+
+## Why nothing caught it
+
+Every core-level testbench held `ce` high on every clock. At `ce = 1` the
+buggy and correct designs are indistinguishable -- one clock per instruction
+means one application per instruction either way. The 1.2M-cycle real-ROM
+lockstep, which does compare `ios_state`, `tone_freq`, `tone_on` and
+`spk_output` against the golden model, passed clean.
+
+The instrument was wrong, not missing.
+
+## Fix and the test that pins it
+
+`ios_fire` and `int0h_fire` in `src/pps41_core.v` are now qualified with `ce`.
+
+`sim/pps41_core_tb.cpp` takes `--ce-period=N`, which pulses `ce` once every N
+clocks, alternating 129/130 to reproduce `ce_gen`'s fractional accumulator
+(a bug whose effect depends on `period mod 3` can hide behind an exact
+divider). `core-rom-lockstep-test` now runs the 1.2M-cycle real-ROM lockstep
+**twice**, at `ce=1` and at `--ce-period=129`. Measured: with the fix
+reverted, the `ce=1` pass still succeeds and the `--ce-period=129` pass
+diverges at cycle 220520 (`tone_freq` 0x44 vs 0x40, `ios_state` 0 vs 1).
+
+`sim/golden/tone_stuck_fuzz.cpp` (`make tone-stuck-fuzz`) fuzzes the golden
+model with randomised, human-plausible button traffic -- including two-button
+presses, which no scripted stimulus produces -- and asserts the same
+invariant `debug_probe` checks on hardware: `tone_on` is never continuously
+high for 2s. 400 trials x 30M cycles (35 hours of chip time) found nothing.
+That is what established the fault was not the ROM or the CPU semantics but
+the RTL's clock-enable handling, and it stays in the suite as the guard on
+that boundary.
