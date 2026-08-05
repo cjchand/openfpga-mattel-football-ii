@@ -34,27 +34,38 @@ module video_renderer (
         endcase
     endfunction
 
-    localparam DIGIT_Y = 18, DIGIT_CELL_W = 24, DIGIT_CELL_H = 40;
+    // Digit cell was 24x40 through Phase 5; scaled to 75% of that on user
+    // request after the first full hardware play-through -- the numerals read
+    // as oversized for their windows. Everything below is that same 0.75
+    // applied consistently: cell 24x40 -> 18x30, stroke 4 -> 3, segment run
+    // 16 -> 12, inter-digit pitch 40 -> 30, decimal point 4x4 -> 3x3.
+    //
+    // The three black digit windows (drawn in the always block below, at
+    // x 12-91, 140-259 and 308-387) are deliberately NOT scaled -- only the
+    // numerals inside them shrank. digit_x therefore re-centres each group in
+    // its own window rather than just scaling the old values: window centres
+    // are 52 / 200 / 348, and a group of n digits spans 30*(n-1) + 18.
+    localparam DIGIT_Y = 23, DIGIT_CELL_W = 18, DIGIT_CELL_H = 30;
 
     function [8:0] digit_x(input [2:0] d);
         case (d)
-            3'd0: digit_x = 9'd20;   3'd1: digit_x = 9'd60;                    // window 1
-            3'd2: digit_x = 9'd148;  3'd3: digit_x = 9'd188; 3'd4: digit_x = 9'd228; // window 2
-            3'd5: digit_x = 9'd316;  3'd6: digit_x = 9'd356;                   // window 3
+            3'd0: digit_x = 9'd28;   3'd1: digit_x = 9'd58;                    // window 1
+            3'd2: digit_x = 9'd161;  3'd3: digit_x = 9'd191; 3'd4: digit_x = 9'd221; // window 2
+            3'd5: digit_x = 9'd324;  3'd6: digit_x = 9'd354;                   // window 3
             default: digit_x = 9'd0;
         endcase
     endfunction
 
-    // Segment rects within a digit cell -- unchanged from Phase 5.
+    // Segment rects within a digit cell.
     function [39:0] seg_rect(input [2:0] s);
         case (s)
-            3'd0: seg_rect = {9'd4,  9'd0,  9'd16, 9'd4};  // a
-            3'd1: seg_rect = {9'd20, 9'd4,  9'd4,  9'd16}; // b
-            3'd2: seg_rect = {9'd20, 9'd20, 9'd4,  9'd16}; // c
-            3'd3: seg_rect = {9'd4,  9'd36, 9'd16, 9'd4};  // d
-            3'd4: seg_rect = {9'd0,  9'd20, 9'd4,  9'd16}; // e
-            3'd5: seg_rect = {9'd0,  9'd4,  9'd4,  9'd16}; // f
-            3'd6: seg_rect = {9'd4,  9'd18, 9'd16, 9'd4};  // g
+            3'd0: seg_rect = {9'd3,  9'd0,  9'd12, 9'd3};  // a
+            3'd1: seg_rect = {9'd15, 9'd3,  9'd3,  9'd12}; // b
+            3'd2: seg_rect = {9'd15, 9'd15, 9'd3,  9'd12}; // c
+            3'd3: seg_rect = {9'd3,  9'd27, 9'd12, 9'd3};  // d
+            3'd4: seg_rect = {9'd0,  9'd15, 9'd3,  9'd12}; // e
+            3'd5: seg_rect = {9'd0,  9'd3,  9'd3,  9'd12}; // f
+            3'd6: seg_rect = {9'd3,  9'd14, 9'd12, 9'd3};  // g
             default: seg_rect = 40'd0;
         endcase
     endfunction
@@ -171,8 +182,8 @@ module video_renderer (
             // Decimal point: row 1 only, bit 7.
             if (digit_row(d[2:0]) == 4'd1) begin
                 rx0 = digit_x(d[2:0]) + DIGIT_CELL_W + 2;
-                ry0 = DIGIT_Y + DIGIT_CELL_H - 4;
-                if (x >= rx0 && x < rx0 + 4 && y >= ry0 && y < ry0 + 4) begin
+                ry0 = DIGIT_Y + DIGIT_CELL_H - 3;
+                if (x >= rx0 && x < rx0 + 3 && y >= ry0 && y < ry0 + 3) begin
                     cell_idx = 4'd1 * 11 + 7;
                     lvl = levels[cell_idx*2 +: 2];
                     rgb = level_color(lvl);

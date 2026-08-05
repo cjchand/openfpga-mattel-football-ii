@@ -27,12 +27,24 @@ static void clear(Vvideo_renderer& d) {
     d.bezel_enable = 1;
 }
 
+// Must track src/video_renderer.v's digit geometry. Kept as named constants
+// rather than inline literals because these were rescaled once (24x40 -> 18x30
+// at the user's request) and every hardcoded coordinate in this file had to be
+// re-derived by hand; next time, only this block changes.
+static const int DIGIT_Y = 23, CELL_W = 18, CELL_H = 30;
+static const int STROKE = 3, RUN = 12;           // segment thickness / length
+static const int DIGIT_X[7] = {28, 58, 161, 191, 221, 324, 354};
+// The three black digit windows, which were NOT rescaled: [x0, x1).
+static const int WIN[3][2] = {{12, 92}, {140, 260}, {308, 388}};
+// Which window each screen digit slot belongs to.
+static const int SLOT_WIN[7] = {0, 0, 1, 1, 1, 2, 2};
+
 static void test_digit_slot0_segment_a_lights_when_level_2() {
     Vvideo_renderer d;
     clear(d);
     set_cell(d, 8, 0, 2); // screen slot 0 -> row 8, segment a
-    d.x = 20 + 4 + 16/2;  // digit_x(0)=20
-    d.y = 18 + 4/2;       // DIGIT_Y=18
+    d.x = DIGIT_X[0] + STROKE + RUN/2;
+    d.y = DIGIT_Y + STROKE/2;
     d.eval();
     CHECK(d.rgb != 0, "segment a of digit slot 0 is non-black when its cell is level 2");
 }
@@ -42,10 +54,10 @@ static void test_gap_between_segments_is_black_regardless_of_level() {
     clear(d);
     set_cell(d, 8, 0, 2); // segment a bright
     set_cell(d, 8, 6, 2); // segment g bright
-    // (12,12) relative to the digit cell falls between segments a/b/f/g --
+    // (9,9) relative to the digit cell falls between segments a/b/f/g --
     // proves individual segment shapes are drawn, not a filled cell.
-    d.x = 20 + 12; // digit_x(0)=20
-    d.y = 18 + 12; // DIGIT_Y=18
+    d.x = DIGIT_X[0] + 9;
+    d.y = DIGIT_Y + 9;
     d.eval();
     CHECK(d.rgb == 0, "gap pixel between segments stays black even with neighboring segments bright");
 }
@@ -55,7 +67,7 @@ static void test_bright_brighter_than_dim() {
     clear(bright); clear(dim);
     set_cell(bright, 8, 0, 2);
     set_cell(dim, 8, 0, 1);
-    int cx = 20 + 4 + 16/2, cy = 18 + 4/2; // digit_x(0)=20, DIGIT_Y=18
+    int cx = DIGIT_X[0] + STROKE + RUN/2, cy = DIGIT_Y + STROKE/2;
     bright.x = cx; bright.y = cy; bright.eval();
     dim.x = cx; dim.y = cy; dim.eval();
     CHECK(((bright.rgb >> 16) & 0xFF) > ((dim.rgb >> 16) & 0xFF), "level 2 (bright) has a higher red-channel value than level 1 (dim)");
@@ -65,9 +77,9 @@ static void test_row1_decimal_point_lights_when_level_2() {
     Vvideo_renderer d;
     clear(d);
     set_cell(d, 1, 7, 2);
-    // digit_row(3)==1, so screen slot 3 (digit_x(3)=188) carries the dp.
-    d.x = 188 + 24 + 2 + 2;
-    d.y = 18 + 40 - 4 + 2;
+    // digit_row(3)==1, so screen slot 3 carries the dp.
+    d.x = DIGIT_X[3] + CELL_W + 2 + 1;
+    d.y = DIGIT_Y + CELL_H - STROKE + 1;
     d.eval();
     CHECK(d.rgb != 0, "row 1's decimal point is non-black when row 1 col 7 is level 2");
 }
@@ -144,8 +156,40 @@ static void test_bezel_enabled_shows_green_margin() {
     CHECK(d.rgb == 0x000000, "above the green margin is black letterbox, not more green");
 }
 
+// The property that actually matters when the numerals are rescaled: every
+// digit must still sit inside its black window, and each group must still be
+// centred in it. Scaling digit_x by 0.75 along with the cell -- the obvious
+// thing to do -- satisfies neither, since the windows did not scale; the
+// digits would bunch toward the left of each window. So this checks the
+// result, not the arithmetic.
+static void test_digits_are_centred_inside_their_unscaled_windows() {
+    for (int w = 0; w < 3; w++) {
+        int first = -1, last = -1;
+        for (int d = 0; d < 7; d++) {
+            if (SLOT_WIN[d] != w) continue;
+            if (first < 0) first = d;
+            last = d;
+            CHECK(DIGIT_X[d] >= WIN[w][0] && DIGIT_X[d] + CELL_W <= WIN[w][1],
+                  "digit cell lies entirely inside its black window");
+        }
+        int left  = DIGIT_X[first] - WIN[w][0];
+        int right = WIN[w][1] - (DIGIT_X[last] + CELL_W);
+        CHECK(left - right <= 1 && right - left <= 1,
+              "digit group is centred in its window (margins equal within 1px)");
+    }
+    // Slot 3 also carries the decimal point, 2px to the right of its cell.
+    // It must not collide with slot 4 or leave the window.
+    int dp_x0 = DIGIT_X[3] + CELL_W + 2;
+    CHECK(dp_x0 + STROKE <= DIGIT_X[4], "decimal point clears the next digit cell");
+    CHECK(dp_x0 + STROKE <= WIN[1][1], "decimal point stays inside its window");
+    // Vertically the numerals must stay within the digit band (y 16..58).
+    CHECK(DIGIT_Y >= 16 && DIGIT_Y + CELL_H <= 59,
+          "digit cell stays within the digit-window band");
+}
+
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
+    run_test("digits_are_centred_inside_their_unscaled_windows", test_digits_are_centred_inside_their_unscaled_windows);
     run_test("digit_slot0_segment_a_lights_when_level_2", test_digit_slot0_segment_a_lights_when_level_2);
     run_test("gap_between_segments_is_black_regardless_of_level", test_gap_between_segments_is_black_regardless_of_level);
     run_test("bright_brighter_than_dim", test_bright_brighter_than_dim);
