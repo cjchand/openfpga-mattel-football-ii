@@ -28,8 +28,9 @@ by Entity), for the 5CEBA4F23C8:
 Meanwhile: **block memory 8,192 / 3,153,920 bits (<1%)**, 2 of 308 RAM
 blocks — and those two are the APF datatable, not ours.
 
-So the largest consumer in the design is a 16 Kbit ROM buffer, and the
-device's memory blocks are essentially unused.
+So the largest consumer in the design is a 12,288-bit ROM buffer
+(`reg [31:0] mem [0:383]` = 1,536 bytes, the whole game ROM), and the
+device's memory blocks are essentially unused. Two M10Ks would hold it.
 
 ### Why
 
