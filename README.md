@@ -52,6 +52,50 @@ Notes:
   sees them as exactly the same bit, so holding either works.
 - The Pocket's L/R triggers and the analog stick are unused.
 
+## Reporting a lockup
+
+If the game freezes — a tone that will not stop, or the display stuck and
+ignoring buttons — **the core will usually tell you why, on screen.**
+
+There is a diagnostic recorder built into the bitstream. It stays completely
+invisible during normal play and arms itself only when something has actually
+gone wrong: a tone running continuously for about two seconds (no real sound
+effect in this game lasts even one), or the CPU's program counter not moving
+for half a second. When it fires, it freezes what it caught and paints a row
+of black-and-white blocks across the very top of the screen.
+
+**That band is the bug report.** It encodes what went wrong and exactly where
+the CPU was, and it is far more useful than any description of the symptoms.
+
+To report it:
+
+1. **Take a photo of the whole screen**, straight on, with the band along the
+   top clearly readable. Any phone camera is fine — the blocks just need to
+   be distinguishable as light or dark. Don't reset the console first; the
+   band holds its capture until you do.
+2. **Open an issue** at
+   [`cjchand/openfpga-mattel-football-ii/issues`](https://github.com/cjchand/openfpga-mattel-football-ii/issues/new)
+   and attach the photo.
+3. Add whatever you can of the following. All of it is helpful, none of it is
+   required — the photo is the important part:
+   - what you were doing when it froze (kickoff, mid-run, after a
+     touchdown, holding SCORE, …)
+   - roughly how long you had been playing
+   - whether a tone was sounding, and whether it was high or low
+   - the **PRO 1 / PRO 2** setting, and the core version from `core.json`
+   - whether it happens again if you repeat the same sequence
+
+If the screen is blank, garbled, or dead to input with **no** band across the
+top, that is a different class of fault — say so explicitly in the issue,
+because it points somewhere completely different in the design.
+
+Maintainer note: the band is 16 slots. Slot 0 is a fixed marker (so the
+photo's alignment can be checked), slots 1-2 are which condition fired, slots
+3-4 are sticky flags, and slots 5-15 are the captured program counter,
+most-significant bit first. `src/debug_probe.v` has the authoritative decode,
+and `docs/kick-tone-lockup-investigation.md` works through a real example
+end to end.
+
 ## Core settings
 
 Both are in the Pocket's core settings menu and persist between sessions.
@@ -128,13 +172,10 @@ the CPU semantics or the ROM.
 
 ### Debugging on hardware
 
-`src/debug_probe.v` is an on-screen flight recorder, and it ships enabled in
-the bitstream. It is completely inert during normal play; it arms only if the
-tone runs continuously for ~2s or the PC stops changing for ~0.5s, then
-latches the state and paints a 16-slot strip across the top of the screen so
-it can be photographed. Slot 0 is a marker, 1-4 are cause and sticky flags,
-and 5-15 are the latched PC, MSB first. See the header of that file for the
-full decode.
+`src/debug_probe.v` is the on-screen flight recorder described under
+**Reporting a lockup** above. Its header has the authoritative slot decode;
+`docs/kick-tone-lockup-investigation.md` works through a real capture, from
+photographed band to root cause.
 
 ### FPGA resources
 
