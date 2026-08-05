@@ -8,9 +8,17 @@ game (see `sim/golden/gameplay_test.cpp`).
 
 ## 1. ROM/bitmap memories are built from logic, not block RAM
 
-**Deferred deliberately** — the core works, timing is clean, and this
-changes memory read timing, which is not something to ship without a
-hardware test.
+**`rom_loader` is DONE** (2026-08-04). Registering its read took the design
+from **54% to 28%** ALM utilisation: the entity went from 4,959 ALMs to
+**10.5**, with its 12,288 bits now in 2 M10Ks (Quartus inferred an
+`altsyncram`). Timing stayed clean in every corner. **Not yet confirmed on
+hardware** — roll back by reverting that commit, or on the SD card by copying
+`/_ff2_rollback/bitstream.rbf_r.known-good` over the core's `bitstream.rbf_r`.
+
+**`field_rom`/`label_rom` are still open** — see the note at the end of this
+section for why they are the riskier half.
+
+The original measurement and reasoning follow.
 
 ### The measurement
 
