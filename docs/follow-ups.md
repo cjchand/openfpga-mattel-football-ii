@@ -145,22 +145,15 @@ that strip from a real device. Decode is in the probe's header comment.
 
 ---
 
-## 3. The SD card's core folder name does not match `dist/`
+## 3. ~~The SD card's core folder name does not match `dist/`~~ — FIXED
 
-`make package` stages into `dist/Cores/cjchand.Mattel Football II/`, which
-matches `core.json`'s `author` + `shortname` and is what the README tells a
-new user to copy. But the folder that actually boots on the development
-Pocket is `Cores/cjchand.Mattel_Football_II/` (underscores), created by an
-earlier session, and that is where every recent bitstream has been hand
-copied.
+**Resolved 2026-08-05.** `make package` now stages into
+`dist/Cores/cjchand.Mattel_Football_II/`, matching the folder that boots on
+the device. Underscores were chosen because that is the spelling already in
+use on the card and the convention across other cores.
 
-Both spellings appear to work — the sibling FB1 core boots fine from
-`Cores/cjchand.Mattel Football` with a space — so this is a tidiness and
-reproducibility problem, not a functional one. It does mean a `dist/` copy
-onto that card creates a SECOND core entry rather than updating the one in
-use.
-
-Not fixed unattended because renaming the live folder while the owner is
-away from the device would leave them unable to boot if the assumption is
-wrong. Worth resolving before any release: pick one spelling, make
-`make package` and the SD card agree, and delete the other.
+`core.json` is deliberately left alone: its `shortname` is still
+`Mattel Football II` with spaces, which is what the Pocket displays in the
+core list. That combination -- underscore folder, spaced shortname -- is the
+exact one that has been booting and playing on the device, so it is the
+proven configuration rather than a tidier-looking guess.

@@ -14,7 +14,7 @@ Football II runs on fundamentally different silicon. See
    one. Verify your dump against the hash in `docs/initial-plan.md` §1.
 2. Copy the entire contents of `dist/` onto your Analogue Pocket's SD
    card root. Don't rename anything; the core's folder must stay named
-   exactly `Cores/cjchand.Mattel Football II` or the Pocket will fail to
+   exactly `Cores/cjchand.Mattel_Football_II` or the Pocket will fail to
    load it ("Load error in 'core': General Error").
 3. Place your ROM dump on the SD card at
    `Assets/mattel_fb_ii/common/b8000-12.bin` (create the
