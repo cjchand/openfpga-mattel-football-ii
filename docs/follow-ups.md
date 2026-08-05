@@ -142,3 +142,25 @@ Not reproducible in simulation by any means tried. `src/debug_probe.v` is
 in the shipped bitstream and will latch the PC and paint it across the top
 of the screen if the tone sticks for ~2s or the CPU halts. Needs a photo of
 that strip from a real device. Decode is in the probe's header comment.
+
+---
+
+## 3. The SD card's core folder name does not match `dist/`
+
+`make package` stages into `dist/Cores/cjchand.Mattel Football II/`, which
+matches `core.json`'s `author` + `shortname` and is what the README tells a
+new user to copy. But the folder that actually boots on the development
+Pocket is `Cores/cjchand.Mattel_Football_II/` (underscores), created by an
+earlier session, and that is where every recent bitstream has been hand
+copied.
+
+Both spellings appear to work — the sibling FB1 core boots fine from
+`Cores/cjchand.Mattel Football` with a space — so this is a tidiness and
+reproducibility problem, not a functional one. It does mean a `dist/` copy
+onto that card creates a SECOND core entry rather than updating the one in
+use.
+
+Not fixed unattended because renaming the live folder while the owner is
+away from the device would leave them unable to boot if the assumption is
+wrong. Worth resolving before any release: pick one spelling, make
+`make package` and the SD card agree, and delete the other.
