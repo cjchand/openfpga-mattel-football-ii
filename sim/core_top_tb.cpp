@@ -161,6 +161,41 @@ static void test_rom_wait_times_out_so_the_core_cannot_hang_forever() {
           "core starts anyway once the ROM-wait timeout expires");
 }
 
+// The real device has a documented behaviour where a button held while the
+// machine powers on selects a mode -- the ROM tests the buttons ~300
+// instructions after its reset vector (see docs/follow-ups.md item 4).
+//
+// On the Pocket there is no power switch: the CPU is held in reset until the
+// ROM data slot lands, then released. So the equivalent gesture is holding
+// the button while the core loads, and what has to be true is that p_input
+// already reflects it on the CPU's very first instruction -- not a few
+// hundred cycles later, by which time the ROM has already made its choice.
+//
+// This pins that. cont1_key is asserted BEFORE the ROM is delivered and held
+// across reset release.
+static void test_button_held_during_rom_load_is_visible_at_first_instruction() {
+    Vcore_top d;
+    power_on(&d);
+    d.cont1_key = (1u << 5); // face_b -> Kick -> p_input bit 4
+    deliver_rom(&d, nop_rom());
+    signal_done(&d);
+
+    // Advance until the core comes out of reset, then check p_input on the
+    // first clock enable the CPU actually runs on.
+    bool seen_release = false, ok = false;
+    for (int i = 0; i < 4000 && !ok; i++) {
+        ticks(&d, 1);
+        if (!seen_release && d.rootp->core_top__DOT__core_rst_n) seen_release = true;
+        if (seen_release && d.rootp->core_top__DOT__core_ce) {
+            ok = (d.rootp->core_top__DOT__p_input_w & 0x10) != 0;
+            break;
+        }
+    }
+    CHECK(seen_release, "core came out of reset");
+    CHECK(ok, "a button held while the ROM loads is already on p_input at the CPU's first ce");
+    d.cont1_key = 0;
+}
+
 // The bug from commit 800c650: cont1_key is in the clk_74a domain and the
 // CPU samples p_input in the core domain. The value must arrive, and must
 // arrive through registers rather than combinationally.
