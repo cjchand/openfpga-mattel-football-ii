@@ -157,3 +157,72 @@ use on the card and the convention across other cores.
 core list. That combination -- underscore folder, spaced shortname -- is the
 exact one that has been booting and playing on the device, so it is the
 proven configuration rather than a tidier-looking guess.
+
+---
+
+## 4. "Hold KICK at power-on to change the speed" — partially traced
+
+User-reported feature on the real device: holding KICK while powering on,
+with PRO 1 or PRO 2, alters the game speed. Mechanism and magnitude unknown.
+An overnight investigation against the golden model established the
+following. **Nothing here changes the core yet** — it is a map for whoever
+picks this up.
+
+### Found: a real boot-time latch
+
+Booting with a button held diverges from an idle boot **at step 311**, only
+~300 instructions after the reset vector, at PC `0x3CE`:
+
+```
+0f:38  I2C
+0f:1c  SKMEA          ; skip the next instruction if RAM == A
+0f:0e  T $12          ; -> 0x3D2 when taken; skipped -> 0x3E7
+```
+
+Diffing RAM between the two boot paths at 400k / 800k / 1.2M cycles, exactly
+one cell is persistently different at every checkpoint:
+
+**RAM `0x1A` == `0x0` after an idle boot, `0xD` after booting with a button
+held.** Everything else that differs (`0x1F`, `0x3A`, `0x70`-`0x75`) drifts
+chaotically and is not stable across checkpoints.
+
+### Not found: any effect on speed
+
+- Pace was measured as the multiset of intervals between display changes
+  during a kickoff, for all 8 buttons held at boot, crossed with PRO 1/2.
+  All intervals stay multiples of the same 1583-cycle display window in
+  near-identical proportions; the ~2% differences are phase, not rate.
+- Forcing `0x1A` to each of its 16 values mid-run changes nothing
+  systematic: span is 25.19-25.23s across all 16, with no trend.
+
+So `0x1A` is latched at boot but was **not** shown to be a speed control. It
+may be read only at a moment earlier than the force point, or be something
+else entirely.
+
+### Also established (a firm negative)
+
+The PRO pin does nothing, in anything tested:
+
+- All **12** D-input pins swept individually: zero trace divergence.
+- PRO 1 vs PRO 2 compared under **all 256** boot-held button combinations,
+  and under holds of 0.5s / 2s / the entire run: **identical in every case**.
+
+This matches MAME, which likewise never reads it in play. Note MAME's own
+port comment says `DIO11` while the bit it defines is `0x400` (bit 10); this
+core uses bit 10, i.e. it matches MAME's *bit*, which is what matters.
+
+### The one caveat worth chasing first
+
+The latch responds to the **nibble**, not the button: KICK / PASS / DOWN /
+LEFT (bits 4-7) all produce identical results, as do SCORE / STATUS / UP /
+RIGHT (bits 0-3). If the real feature is specific to KICK, then either it is
+really "any of those four", or the boot code reads P in a way this model
+conflates. Worth resolving before building anything on `0x1A`.
+
+### What would actually settle it
+
+Ground truth from the device. Specifically: **what** visibly changes (ball
+travel speed? game-clock rate? opponent advance rate?), **how much**, and
+whether it is KICK alone or any of KICK/PASS/DOWN/LEFT. With one concrete
+observable, the golden model can be pointed straight at it — every tool used
+above is in the job scratch dir and takes minutes to re-run.
