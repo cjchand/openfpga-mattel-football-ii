@@ -3,3 +3,8 @@ development-assets/
 sim/roms/
 sim/obj_dir*/
 dist/assets/
+
+# Python bytecode (a stale .pyc here once made the icon test disagree with
+# the generator that had just written the .bin)
+__pycache__/
+*.pyc

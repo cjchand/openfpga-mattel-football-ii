@@ -1,5 +1,6 @@
 # Mattel Football II openFPGA core — build entry points
-# make sim       — run the full Phase 1-3 Verilator/golden-model test suite
+# make sim       — run the full Verilator/golden-model test suite, plus the
+#                  platform-icon check
 # make bitstream — compile the Quartus project in Docker
 # make package   — bit-reverse + stage the bitstream for the Pocket
 
@@ -13,6 +14,7 @@ RBF_R_DEST ?= dist/Cores/cjchand.Mattel_Football_II/bitstream.rbf_r
 
 sim:
 	$(MAKE) -C sim test
+	python3 sim/test_platform_icon.py
 
 bitstream:
 	docker run --platform linux/amd64 --rm -t \
