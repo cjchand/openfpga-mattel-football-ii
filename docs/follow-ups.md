@@ -199,17 +199,31 @@ So `0x1A` is latched at boot but was **not** shown to be a speed control. It
 may be read only at a moment earlier than the force point, or be something
 else entirely.
 
-### Also established (a firm negative)
+### CORRECTION: the PRO switch does work (earlier negative was wrong)
 
-The PRO pin does nothing, in anything tested:
+An earlier pass concluded the PRO pin was never read, on the basis of a sweep
+that held buttons at boot and compared PRO 1 against PRO 2. **That test never
+started a game.** The switch is read a few seconds into an actual play, so a
+core sitting at idle never reaches the read, and the sweep reported a false
+negative.
 
-- All **12** D-input pins swept individually: zero trace divergence.
-- PRO 1 vs PRO 2 compared under **all 256** boot-held button combinations,
-  and under holds of 0.5s / 2s / the entire run: **identical in every case**.
+Re-run with a kickoff and a run:
 
-This matches MAME, which likewise never reads it in play. Note MAME's own
-port comment says `DIO11` while the bit it defines is `0x400` (bit 10); this
-core uses bit 10, i.e. it matches MAME's *bit*, which is what matters.
+- **PRO 1 and PRO 2 diverge at cycle 961584** -- 3.81s after the kickoff --
+  at PC `0x35C`, which is the difficulty-read block.
+- `SKISL` executes 42 times under PRO 1 and 53 times under PRO 2 in the same
+  4M-cycle run, every one of them selecting DIO10.
+- End state differs: **5 field lamps lit under PRO 1, 6 under PRO 2.**
+
+DIO10 is also the 4th digit's decimal-point output, and `SKISL` reads
+`d_output | d_input`, so a DP being driven high could have masked the switch
+entirely. Measured: DIO10 is driven high on **0.0%** of cycles and **none**
+of the DIO10 reads are masked. Not a problem.
+
+Lesson worth keeping: a "no effect" result from a test that never exercises
+the feature's context is not evidence of no effect. The idle-state sweep
+looked exhaustive -- 12 pins, 256 button combinations, three hold lengths --
+and was worthless, because none of it played the game.
 
 ### The one caveat worth chasing first
 
