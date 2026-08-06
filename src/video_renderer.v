@@ -34,24 +34,47 @@ module video_renderer (
         endcase
     endfunction
 
-    // Digit cell was 24x40 through Phase 5; scaled to 75% of that on user
-    // request after the first full hardware play-through -- the numerals read
-    // as oversized for their windows. Everything below is that same 0.75
-    // applied consistently: cell 24x40 -> 18x30, stroke 4 -> 3, segment run
-    // 16 -> 12, inter-digit pitch 40 -> 30, decimal point 4x4 -> 3x3.
+    // --- Scoreboard plaque geometry ---
     //
-    // The three black digit windows (drawn in the always block below, at
-    // x 12-91, 140-259 and 308-387) are deliberately NOT scaled -- only the
-    // numerals inside them shrank. digit_x therefore re-centres each group in
-    // its own window rather than just scaling the old values: window centres
-    // are 52 / 200 / 348, and a group of n digits spans 30*(n-1) + 18.
-    localparam DIGIT_Y = 23, DIGIT_CELL_W = 18, DIGIT_CELL_H = 30;
+    // Taken from FB1, whose values are hardware-tuned, and matching the real
+    // FB2's plaque: the white carries all the way to both screen edges, and
+    // the three digit windows are separated by a HAIRLINE white divider
+    // rather than the wide white gaps this core shipped with.
+    //
+    //   white 0..40 | win1 41..139 | 140 | win2 141..258 | 259 | win3 260..358 | white 359..399
+    //
+    // FB1 keeps a 1px black corner column at x=0 and x=399; those are dropped
+    // here so the white really does reach the edge.
+    localparam WIN1_X0 = 41,  WIN1_X1 = 140;   // [x0, x1)
+    localparam WIN2_X0 = 141, WIN2_X1 = 259;
+    localparam WIN3_X0 = 260, WIN3_X1 = 359;
+
+    // Vertical: the plaque sits directly on top of the field's green margin,
+    // with no black band between them (FB1 does the same -- "carries the
+    // field's green up to the score area"). The black that used to fill
+    // y 75..126 now sits above the plaque as a top letterbox, balancing the
+    // one below the field.
+    //
+    //   black 0..51 | bar1 52..67 | digits 68..110 | bar2 111..126 | green 127..
+    localparam BAR1_Y0  = 52,  BAR1_Y1  = 68;    // [y0, y1), 16 rows
+    localparam DIGIT_Y0 = 68,  DIGIT_Y1 = 111;   // 43 rows
+    localparam BAR2_Y0  = 111, BAR2_Y1  = 127;   // 16 rows
+
+    // Digit cell was 24x40 through Phase 5, scaled to 75% (18x30, stroke 3,
+    // segment run 12, pitch 30, decimal point 3x3) after the first hardware
+    // play-through -- the numerals read as oversized for their windows.
+    //
+    // digit_x centres each group in its own window rather than scaling fixed
+    // offsets: window centres are 90 / 200 / 309, and a group of n digits
+    // spans 30*(n-1) + 18. DIGIT_Y centres the 30-row cell in the 43-row
+    // band: 68 + (43-30)/2.
+    localparam DIGIT_Y = 74, DIGIT_CELL_W = 18, DIGIT_CELL_H = 30;
 
     function [8:0] digit_x(input [2:0] d);
         case (d)
-            3'd0: digit_x = 9'd28;   3'd1: digit_x = 9'd58;                    // window 1
+            3'd0: digit_x = 9'd66;   3'd1: digit_x = 9'd96;                    // window 1
             3'd2: digit_x = 9'd161;  3'd3: digit_x = 9'd191; 3'd4: digit_x = 9'd221; // window 2
-            3'd5: digit_x = 9'd324;  3'd6: digit_x = 9'd354;                   // window 3
+            3'd5: digit_x = 9'd285;  3'd6: digit_x = 9'd315;                   // window 3
             default: digit_x = 9'd0;
         endcase
     endfunction
@@ -93,8 +116,11 @@ module video_renderer (
     localparam FIELD_X0 = 30, COL_PITCH = 34;
     // STRIP_H must match gen_bezel_bitmaps.py's STRIP_Y1 - STRIP_Y0.
     localparam STRIP_H = 108;
-    // Centred in the canvas area below the scoreboard (which ends at y=75):
-    // 163 + 108/2 = 217, and (75 + 360)/2 = 217.
+    // Unchanged. The plaque was moved down to meet it rather than the field
+    // being moved up, which keeps the field exactly where it is on hardware
+    // and leaves the reclaimed black as a top letterbox. The identity that
+    // must hold is BAR2_Y1 == STRIP_Y0 - BORDER_W - GREEN_MARGIN (127), so
+    // the green above the field is the same 32px as the green below it.
     localparam STRIP_Y0 = 163;
     // Lamps are thin dashes, as on the real device and FB1 (which uses
     // 16x6 in a 36px cell). Scaled to this core's 32px cell: 14 wide with a
@@ -119,7 +145,8 @@ module video_renderer (
     // --- background layers ---
     wire [23:0] label_rgb;
     /* verilator lint_off WIDTHEXPAND */
-    wire [8:0]  label_band_y = (y < 9'd16) ? y : (y - 9'd43); // bar2 starts at y=59, band_y 16 there
+    // label_rom holds 32 rows: 0-15 are bar1, 16-31 are bar2.
+    wire [8:0]  label_band_y = (y < BAR1_Y1) ? (y - BAR1_Y0) : (y - BAR2_Y0 + 9'd16);
     /* verilator lint_on WIDTHEXPAND */
     label_rom lrom (.x(x), .band_y(label_band_y[4:0]), .rgb(label_rgb));
 
@@ -141,24 +168,28 @@ module video_renderer (
         // --- background (bottom layer) ---
         if (!bezel_enable) begin
             rgb = C_BG;
-        end else if (y < 9'd16 || (y >= 9'd59 && y < 9'd75)) begin
+        end else if ((y >= BAR1_Y0 && y < BAR1_Y1) ||
+                     (y >= BAR2_Y0 && y < BAR2_Y1)) begin
             rgb = label_rgb; // label bars
-        end else if (y >= 9'd16 && y < 9'd59) begin
-            // digit-window band: corner accents + 3 digit-window boxes
-            // are black; everything else (including the gaps between
-            // windows) is white, matching the photo's one continuous
-            // white scoreboard plaque.
-            if ((x < 9'd6) || (x >= 9'd12 && x < 9'd92) ||
-                (x >= 9'd140 && x < 9'd260) || (x >= 9'd308 && x < 9'd388) ||
-                (x >= 9'd394))
+        end else if (y >= DIGIT_Y0 && y < DIGIT_Y1) begin
+            // Digit-window band: the three windows are black, everything
+            // else is the white plaque -- including both screen edges and
+            // the two 1px dividers between windows.
+            if ((x >= WIN1_X0 && x < WIN1_X1) ||
+                (x >= WIN2_X0 && x < WIN2_X1) ||
+                (x >= WIN3_X0 && x < WIN3_X1))
                 rgb = C_BG;
             else
                 rgb = C_WHITE;
         end else if (y >= (STRIP_Y0 - BORDER_W) && y < (STRIP_Y0 + STRIP_H + BORDER_W)) begin
             rgb = field_rgb; // field strip (border + 10-column art)
-        end else if (y >= (STRIP_Y0 - BORDER_W - GREEN_MARGIN) &&
+        end else if (y >= BAR2_Y1 &&
                      y <  (STRIP_Y0 + STRIP_H + BORDER_W + GREEN_MARGIN)) begin
-            rgb = C_GREEN; // green margin above/below the field strip
+            // Green margin. Above the field it starts the instant the plaque
+            // ends (BAR2_Y1 == STRIP_Y0 - BORDER_W - GREEN_MARGIN, i.e. the
+            // same 32px as below) so there is no black band separating the
+            // scoreboard from the playfield.
+            rgb = C_GREEN;
         end else begin
             // Letterbox. FB1 does the same (a black bar above and below a
             // 32px green margin) -- filling the whole lower canvas with

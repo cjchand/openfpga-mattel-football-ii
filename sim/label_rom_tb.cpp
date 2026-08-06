@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
     // "somewhere in this row there is ink" check does not.
     struct Window { int x0, x1; const char* name; };
     const Window windows[3] = {
-        {12, 92, "window1"}, {140, 260, "window2"}, {308, 388, "window3"},
+        {41, 140, "window1"}, {141, 259, "window2"}, {260, 359, "window3"},
     };
     const int bar_rows[2] = {8, 24}; // mid-height row of bar1 / bar2
     const char* bar_names[2] = {"bar1", "bar2"};
@@ -60,19 +60,28 @@ int main(int argc, char** argv) {
         }
     }
 
-    // The gaps between windows must stay clean background -- proves no
-    // word overflows its window into a neighbouring one.
-    const int gap_xs[2] = {120, 290};
+    // Nothing may be drawn outside a window -- proves no word overflows into
+    // a neighbour or off the plaque. This used to sample two points in the
+    // wide white gaps between windows; those gaps are now single-pixel
+    // dividers (x=140 and x=259), so the whole outside is checked instead:
+    // the left/right margins plus the two divider columns. With only 1px
+    // between neighbouring words this is the check that has to be exact.
     for (int b = 0; b < 2; b++) {
-        for (int g = 0; g < 2; g++) {
-            bool gap_clean = true;
+        for (int x = 0; x < 400; x++) {
+            bool inside = false;
+            for (int w = 0; w < 3; w++)
+                if (x >= windows[w].x0 && x < windows[w].x1) inside = true;
+            if (inside) continue;
             for (int by = bar_rows[b] - 8; by < bar_rows[b] + 8; by++) {
-                if (sample(d, gap_xs[g], by) != 0xFFFFFF) { gap_clean = false; break; }
+                if (sample(d, x, by) != 0xFFFFFF) {
+                    char msg[128];
+                    std::snprintf(msg, sizeof(msg),
+                                  "%s has ink at x=%d, outside every digit window",
+                                  bar_names[b], x);
+                    CHECK(false, msg);
+                    break;
+                }
             }
-            char msg[128];
-            std::snprintf(msg, sizeof(msg), "%s inter-window gap at x=%d is white background",
-                          bar_names[b], gap_xs[g]);
-            CHECK(gap_clean, msg);
         }
     }
 

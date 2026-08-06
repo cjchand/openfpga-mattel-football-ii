@@ -46,8 +46,10 @@ FONT_SIZE = 40
 # window groupings: window1 = digit_x(0..1), window2 = digit_x(2..4),
 # window3 = digit_x(5..6)). See Task 2's geometry table.
 # window1 = x[12,92), window2 = x[140,260), window3 = x[308,388).
-LABEL_COL_TARGET_CENTERS = [52, 200, 348]
-LABEL_COL_WINDOW_W = [80, 120, 80]
+# Must track video_renderer.v's WIN*_X0/X1: windows are 41-139, 141-258 and
+# 260-358, so centres 90 / 200 / 309 and widths 99 / 118 / 99.
+LABEL_COL_TARGET_CENTERS = [90, 200, 309]
+LABEL_COL_WINDOW_W = [99, 118, 99]
 BAR1_WORDS = ["DOWN", "FIELD POSITION", "YARDS TO GO"]
 BAR2_WORDS = ["HOME", "TIME REMAINING", "VISITORS"]
 

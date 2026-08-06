@@ -31,11 +31,15 @@ static void clear(Vvideo_renderer& d) {
 // rather than inline literals because these were rescaled once (24x40 -> 18x30
 // at the user's request) and every hardcoded coordinate in this file had to be
 // re-derived by hand; next time, only this block changes.
-static const int DIGIT_Y = 23, CELL_W = 18, CELL_H = 30;
+static const int DIGIT_Y = 74, CELL_W = 18, CELL_H = 30;
 static const int STROKE = 3, RUN = 12;           // segment thickness / length
-static const int DIGIT_X[7] = {28, 58, 161, 191, 221, 324, 354};
-// The three black digit windows, which were NOT rescaled: [x0, x1).
-static const int WIN[3][2] = {{12, 92}, {140, 260}, {308, 388}};
+static const int DIGIT_X[7] = {66, 96, 161, 191, 221, 285, 315};
+// The three black digit windows: [x0, x1). FB1's values.
+static const int WIN[3][2] = {{41, 140}, {141, 259}, {260, 359}};
+// Plaque bands: [y0, y1).
+static const int BAR1_Y0 = 52, BAR1_Y1 = 68;
+static const int DIGIT_Y0 = 68, DIGIT_Y1 = 111;
+static const int BAR2_Y0 = 111, BAR2_Y1 = 127;
 // Which window each screen digit slot belongs to.
 static const int SLOT_WIN[7] = {0, 0, 1, 1, 1, 2, 2};
 
@@ -110,7 +114,7 @@ static void test_bezel_disabled_is_plain_black() {
     Vvideo_renderer d;
     clear(d);
     d.bezel_enable = 0;
-    d.x = 200; d.y = 100; // inside where the field strip would be
+    d.x = 200; d.y = 200; // inside where the field strip would be
     d.eval();
     CHECK(d.rgb == 0, "bezel_enable=0 shows plain black everywhere outside lit LEDs");
 }
@@ -118,12 +122,10 @@ static void test_bezel_disabled_is_plain_black() {
 static void test_bezel_enabled_shows_label_bar_background() {
     Vvideo_renderer d;
     clear(d);
-    // x=120 is the gap between digit window 1 (x12-91) and window 2
-    // (x140-259), so no label text belongs here. (x=300 would NOT work:
-    // it is close enough to window 3 (x308-387, "YARDS TO GO") that
-    // asserting white there would be asserting text is absent where text
-    // is legitimately drawn.)
-    d.x = 120; d.y = 5;
+    // Sampled in the left margin of bar 1, outside every label word: the
+    // words are centred on 90 / 200 / 309 within windows 99 / 118 / 99 wide,
+    // so x=5 is comfortably clear of "DOWN".
+    d.x = 5; d.y = BAR1_Y0 + 5;
     d.eval();
     CHECK(d.rgb == 0xFFFFFF, "label bar background is white when bezel_enable=1");
 }
@@ -151,9 +153,9 @@ static void test_bezel_enabled_shows_green_margin() {
     d.x = 200; d.y = 350; // beyond the green margin: black letterbox
     d.eval();
     CHECK(d.rgb == 0x000000, "below the green margin is black letterbox, not more green");
-    d.x = 200; d.y = 100; // above the green margin: black letterbox
+    d.x = 200; d.y = 20; // above the plaque: black top letterbox
     d.eval();
-    CHECK(d.rgb == 0x000000, "above the green margin is black letterbox, not more green");
+    CHECK(d.rgb == 0x000000, "above the plaque is black top letterbox");
 }
 
 // The property that actually matters when the numerals are rescaled: every
@@ -183,12 +185,56 @@ static void test_digits_are_centred_inside_their_unscaled_windows() {
     CHECK(dp_x0 + STROKE <= DIGIT_X[4], "decimal point clears the next digit cell");
     CHECK(dp_x0 + STROKE <= WIN[1][1], "decimal point stays inside its window");
     // Vertically the numerals must stay within the digit band (y 16..58).
-    CHECK(DIGIT_Y >= 16 && DIGIT_Y + CELL_H <= 59,
+    CHECK(DIGIT_Y >= DIGIT_Y0 && DIGIT_Y + CELL_H <= DIGIT_Y1,
           "digit cell stays within the digit-window band");
+}
+
+// The two things asked for after the second hardware session, checked as
+// results rather than as constants: the plaque must reach both screen edges
+// (it used to have black columns at x<6 and x>=394), and the windows must be
+// separated by a hairline rather than the 48px white gaps it shipped with.
+static void test_plaque_reaches_the_edges_with_hairline_dividers() {
+    Vvideo_renderer d;
+    clear(d);
+    int y = DIGIT_Y0 + 5;
+
+    d.x = 0;   d.y = y; d.eval();
+    CHECK(d.rgb == 0xFFFFFF, "plaque is white at the very left edge, no black column");
+    d.x = 399; d.y = y; d.eval();
+    CHECK(d.rgb == 0xFFFFFF, "plaque is white at the very right edge, no black column");
+
+    // Each divider is exactly one pixel: black, white, black.
+    for (int i = 0; i < 2; i++) {
+        int div = WIN[i][1];               // == WIN[i+1][0] - 1
+        d.x = div - 1; d.y = y; d.eval();
+        CHECK(d.rgb == 0x000000, "pixel left of the divider is inside the black window");
+        d.x = div;     d.y = y; d.eval();
+        CHECK(d.rgb == 0xFFFFFF, "divider pixel is white");
+        d.x = div + 1; d.y = y; d.eval();
+        CHECK(d.rgb == 0x000000, "pixel right of the divider is inside the next black window");
+    }
+}
+
+// The gap the plaque used to float above: y 75..126 was black letterbox
+// between the scoreboard and the field's green. Nothing black may remain
+// between the bottom label bar and the green.
+static void test_no_black_band_between_plaque_and_field() {
+    Vvideo_renderer d;
+    clear(d);
+    d.x = 200;
+    for (int y = BAR2_Y1; y < 163 - 4; y++) {   // BAR2_Y1 .. field border
+        d.y = y; d.eval();
+        CHECK(d.rgb == 0x0E8A03, "every row between the plaque and the field is green, not black");
+    }
+    // And the row immediately above is still plaque, not a gap.
+    d.y = BAR2_Y1 - 1; d.eval();
+    CHECK(d.rgb != 0x0E8A03, "the plaque's last row is not already green");
 }
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
+    run_test("plaque_reaches_the_edges_with_hairline_dividers", test_plaque_reaches_the_edges_with_hairline_dividers);
+    run_test("no_black_band_between_plaque_and_field", test_no_black_band_between_plaque_and_field);
     run_test("digits_are_centred_inside_their_unscaled_windows", test_digits_are_centred_inside_their_unscaled_windows);
     run_test("digit_slot0_segment_a_lights_when_level_2", test_digit_slot0_segment_a_lights_when_level_2);
     run_test("gap_between_segments_is_black_regardless_of_level", test_gap_between_segments_is_black_regardless_of_level);
