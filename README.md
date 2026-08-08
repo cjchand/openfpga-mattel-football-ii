@@ -7,21 +7,42 @@ project to [`cjchand/openfpga-mattel-football`](https://github.com/cjchand/openf
 Football II runs on fundamentally different silicon. See
 `docs/initial-plan.md` for the full architecture writeup.
 
-## Installation
+## Installing on your Analogue Pocket
 
-1. You need your own legally-obtained dump of the Football II ROM
-   (`b8000-12`, 1536 bytes). This project cannot include or distribute
-   one. Verify your dump against the hash in `docs/initial-plan.md` §1.
-2. Copy the entire contents of `dist/` onto your Analogue Pocket's SD
-   card root. Don't rename anything; the core's folder must stay named
-   exactly `Cores/cjchand.Mattel_Football_II` or the Pocket will fail to
-   load it ("Load error in 'core': General Error").
-3. Place your ROM dump on the SD card at
-   `Assets/mattel_fb_ii/common/b8000-12.bin` (create the
-   `mattel_fb_ii` and `common` folders if they don't already exist;
-   the filename must be exactly `b8000-12.bin` per this core's
+No building required — every release ships a ready-to-run core. All you need
+is the release zip and your own dump of the game ROM.
+
+1. **Download the core.** Go to the
+   [latest release](https://github.com/cjchand/openfpga-mattel-football-ii/releases/latest)
+   and download the `cjchand.Mattel_Football_II_v*.zip` file, then unzip it.
+   (Every version is listed on the
+   [releases page](https://github.com/cjchand/openfpga-mattel-football-ii/releases).)
+2. **Copy it onto your Pocket's SD card.** Copy everything inside the
+   unzipped folder (`Cores`, `platforms`, `assets`, `icon.bin`) onto the root
+   of your Pocket's SD card, merging into the folders that are already there
+   (say "merge" / "yes to all" if your OS asks — don't replace the whole
+   folder). Don't rename anything; the core's folder must stay named exactly
+   `Cores/cjchand.Mattel_Football_II` or the Pocket will refuse to load it
+   ("Load error in 'core': General Error").
+3. **Add the game ROM yourself — it's not included.** This project can't ship
+   the Mattel Electronic Football II ROM (it's copyrighted), so you'll need to
+   supply your own dump: 1536 bytes, CRC32 `5b65fc38`, SHA1
+   `4fafc9deb5609b16f09b18b7346ea96ffe8bf9e0` — the `b8000-12` file from the
+   MAME `mfootb2` romset. Rename it to `b8000-12.bin` and place it on the SD
+   card at:
+   `Assets/mattel_fb_ii/common/b8000-12.bin`
+   (create the `mattel_fb_ii` and `common` folders if they don't already
+   exist; the filename must be exactly `b8000-12.bin`, per this core's
    `data.json` dataslot definition).
-4. Boot the core from the Pocket's core list.
+4. **Eject the SD card, put it back in your Pocket, and boot the core** from
+   the core list — it appears under the "Mattel Football II" platform,
+   category Handheld. See [Controls](#controls) below for the button map, and
+   [Core settings](#core-settings) for the presentation and difficulty
+   options (long-press the Pocket's menu button while the core is running).
+
+Prefer to build it yourself? See [Development](#development) — but note the
+`dist/` folder in this repo is only updated when a bitstream is rebuilt, so
+the release zip is the authoritative download.
 
 ## Controls
 
@@ -179,7 +200,7 @@ photographed band to root cause.
 
 ### FPGA resources
 
-5,156 / 18,480 ALMs (28%), 4 M10K blocks, timing clean in every corner. The
+5,227 / 18,480 ALMs (28%), 4 M10K blocks, timing clean in every corner. The
 game ROM lives in block RAM; see `docs/follow-ups.md` for the remaining
 (deferred) win in the bitmap ROMs.
 
