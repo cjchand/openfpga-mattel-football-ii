@@ -147,16 +147,44 @@ that strip from a real device. Decode is in the probe's header comment.
 
 ## 3. ~~The SD card's core folder name does not match `dist/`~~ — FIXED
 
-**Resolved 2026-08-05.** `make package` now stages into
-`dist/Cores/cjchand.Mattel_Football_II/`, matching the folder that boots on
-the device. Underscores were chosen because that is the spelling already in
-use on the card and the convention across other cores.
+**Resolved 2026-08-07 (and the 2026-08-05 "fix" was wrong -- see below).**
+`make package` stages into `dist/Cores/cjchand.Mattel Football II/`, which
+matches `core.json`'s `author` + `.` + `shortname` exactly.
 
-`core.json` is deliberately left alone: its `shortname` is still
-`Mattel Football II` with spaces, which is what the Pocket displays in the
-core list. That combination -- underscore folder, spaced shortname -- is the
-exact one that has been booting and playing on the device, so it is the
-proven configuration rather than a tidier-looking guess.
+### The 2026-08-05 reasoning was wrong, and it shipped two broken releases
+
+That earlier pass staged into `cjchand.Mattel_Football_II` (underscores) while
+leaving `shortname` as `Mattel Football II` (spaces), and justified it like
+this: *"that combination -- underscore folder, spaced shortname -- is the exact
+one that has been booting and playing on the device, so it is the proven
+configuration."*
+
+**That combination was never on the device.** The SD card's `core.json` was
+dated 2026-08-03 and still said `"shortname": "Mattel_Football_II"`, matching
+its underscore folder. Only `bitstream.rbf_r` was ever re-copied to the card
+afterwards, so the repo's edited `core.json` never reached hardware. The
+config that was "proven" was underscore folder + **underscore** shortname.
+
+Consequence: v0.1.0 and v1.0.0 both shipped a mismatched pair and fail on any
+fresh install with `Load error in 'core': General Error`. Found only when a
+third party tried to install v1.0.0.
+
+### The actual rule
+
+The Pocket requires the core's folder name to equal `author` + `.` +
+`shortname` character for character. Verified empirically against **235 cores
+installed on the card: zero mismatches.** Spaces are fine (FB1 ships
+`cjchand.Mattel Football`, and `agg23.PC Engine` and others do the same) --
+what is not fine is the two disagreeing.
+
+### Lesson
+
+The same failure mode as the `std::hex` stimulus bug and MAME's silent
+`set_value()`: **the thing being verified was not the thing being shipped.**
+"Proven on hardware" is only meaningful if the artifact on the hardware is
+byte-identical to the artifact in the repo. Diff them; don't assume a partial
+copy propagated everything. A one-line `diff` of card vs `dist/` would have
+caught this before the first release.
 
 ---
 

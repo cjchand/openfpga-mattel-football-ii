@@ -21,9 +21,11 @@ is the release zip and your own dump of the game ROM.
    unzipped folder (`Cores`, `platforms`, `assets`, `icon.bin`) onto the root
    of your Pocket's SD card, merging into the folders that are already there
    (say "merge" / "yes to all" if your OS asks — don't replace the whole
-   folder). Don't rename anything; the core's folder must stay named exactly
-   `Cores/cjchand.Mattel_Football_II` or the Pocket will refuse to load it
-   ("Load error in 'core': General Error").
+   folder). **Don't rename anything** — the core's folder must stay named
+   exactly `Cores/cjchand.Mattel Football II`, spaces and all, or the Pocket
+   will refuse to load it ("Load error in 'core': General Error"). The Pocket
+   requires that folder name to match `core.json`'s author and shortname
+   character for character.
 3. **Add the game ROM yourself — it's not included.** This project can't ship
    the Mattel Electronic Football II ROM (it's copyrighted), so you'll need to
    supply your own dump: 1536 bytes, CRC32 `5b65fc38`, SHA1
@@ -39,6 +41,16 @@ is the release zip and your own dump of the game ROM.
    category Handheld. See [Controls](#controls) below for the button map, and
    [Core settings](#core-settings) for the presentation and difficulty
    options (long-press the Pocket's menu button while the core is running).
+
+### Upgrading from v1.0.0 or v0.1.0
+
+Those two releases shipped the core folder named `cjchand.Mattel_Football_II`
+while `core.json` declared the shortname `Mattel Football II` — a mismatch the
+Pocket rejects with "Load error in 'core': General Error". If you installed
+either of them, **delete the old `Cores/cjchand.Mattel_Football_II` folder from
+your SD card** before copying v1.0.1 in, or you'll be left with two core
+folders and the broken one still failing to load. Your saves and settings are
+not stored in that folder, so nothing is lost.
 
 Prefer to build it yourself? See [Development](#development) — but note the
 `dist/` folder in this repo is only updated when a bitstream is rebuilt, so

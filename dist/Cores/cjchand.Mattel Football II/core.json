@@ -7,7 +7,7 @@
             "description": "Mattel Electronic Football II (1978) for the Analogue Pocket.",
             "author": "cjchand",
             "url": "https://github.com/cjchand/openfpga-mattel-football-ii",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "date_release": "2026-08-07"
         },
         "framework": {

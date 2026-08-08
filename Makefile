@@ -8,13 +8,14 @@ QUARTUS_IMAGE ?= didiermalenfant/quartus:22.1-apple-silicon
 QPF           ?= ap_core.qpf
 
 RBF        ?= src/fpga/output_files/ap_core.rbf
-RBF_R_DEST ?= dist/Cores/cjchand.Mattel_Football_II/bitstream.rbf_r
+RBF_R_DEST ?= dist/Cores/cjchand.Mattel Football II/bitstream.rbf_r
 
 .PHONY: sim bitstream package clean
 
 sim:
 	$(MAKE) -C sim test
 	python3 sim/test_platform_icon.py
+	python3 sim/test_core_packaging.py
 
 bitstream:
 	docker run --platform linux/amd64 --rm -t \
