@@ -7,6 +7,11 @@ project to [`cjchand/openfpga-mattel-football`](https://github.com/cjchand/openf
 Football II runs on fundamentally different silicon. See
 `docs/initial-plan.md` for the full architecture writeup.
 
+> Disclosure: Claude was used to implement this project. Also, while I work in the software
+> industry, FPGA programming and programming for the Pocket in particular are entirely
+> new to me. I would love any feedback on where this project violates best practices, norms,
+> or otherwise can be made "better".
+
 ## Installing on your Analogue Pocket
 
 No building required — every release ships a ready-to-run core. All you need
