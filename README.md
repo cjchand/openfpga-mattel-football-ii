@@ -42,15 +42,7 @@ is the release zip and your own dump of the game ROM.
    [Core settings](#core-settings) for the presentation and difficulty
    options (long-press the Pocket's menu button while the core is running).
 
-### Upgrading from v1.0.0 or v0.1.0
-
-Those two releases shipped the core folder named `cjchand.Mattel_Football_II`
-while `core.json` declared the shortname `Mattel Football II` — a mismatch the
-Pocket rejects with "Load error in 'core': General Error". If you installed
-either of them, **delete the old `Cores/cjchand.Mattel_Football_II` folder from
-your SD card** before copying v1.0.1 in, or you'll be left with two core
-folders and the broken one still failing to load. Your saves and settings are
-not stored in that folder, so nothing is lost.
+### Local Build
 
 Prefer to build it yourself? See [Development](#development) — but note the
 `dist/` folder in this repo is only updated when a bitstream is rebuilt, so
