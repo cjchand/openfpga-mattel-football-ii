@@ -62,8 +62,8 @@ the testbenches and `docs/` refer to.
 
 | Handheld key | Pocket button | CPU bit | What it does |
 |---|---|---|---|
-| **RUN ←** | D-pad Left | 7 | Runs the ball carrier left (toward your own goal) |
-| **RUN →** | D-pad Right | 3 | Runs the ball carrier right (toward the opponent's goal) |
+| **RUN ←** | D-pad Left | 7 | Runs the ball carrier left |
+| **RUN →** | D-pad Right | 3 | Runs the ball carrier right |
 | **RUN ↑** | D-pad Up | 2 | Moves up a lane |
 | **RUN ↓** | D-pad Down | 6 | Moves down a lane |
 | **KICK** | B (bottom face) | 4 | Kickoff, punt, or field-goal attempt, depending on game state |
@@ -73,6 +73,8 @@ the testbenches and `docs/` refer to.
 
 Notes:
 
+- To attempt a field goal kick take two steps back, then press the KICK button
+  (yes, totally not intuitive).
 - **The field blanks while STATUS or SCORE is held.** That is how the real
   device behaves — the display is a multiplexed matrix and those keys take
   it over — not a bug in the core.
